@@ -12,7 +12,10 @@ def normalize_request_id(candidate: str | None) -> str:
     if candidate is None:
         return str(uuid4())
     try:
-        return str(UUID(candidate))
+        request_id = UUID(candidate)
+        if request_id.version != 4:
+            raise ValueError
+        return str(request_id)
     except ValueError:
         return str(uuid4())
 

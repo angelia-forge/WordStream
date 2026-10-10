@@ -140,6 +140,7 @@ venv.bak/
 data/
 *.sqlite
 *.sqlite3
+.tools/
 
 # Spyder project settings
 .spyderproject

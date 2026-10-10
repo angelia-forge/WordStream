@@ -24,7 +24,7 @@ def test_settings_can_be_updated(client: TestClient) -> None:
         json={
             "timezone": "Europe/London",
             "tts_rate": 1.25,
-            "default_interval_seconds": 8,
+            "default_interval": 8,
             "daily_goal": 30,
         },
     )
@@ -33,7 +33,7 @@ def test_settings_can_be_updated(client: TestClient) -> None:
     body = response.json()
     assert body["timezone"] == "Europe/London"
     assert body["tts_rate"] == 1.25
-    assert body["default_interval_seconds"] == 8
+    assert body["default_interval"] == 8
     assert body["daily_goal"] == 30
 
 

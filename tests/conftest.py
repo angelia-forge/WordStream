@@ -3,7 +3,6 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from pwdlib import PasswordHash
 
 from alembic import command
 from alembic.config import Config
@@ -45,7 +44,7 @@ def protected_client(database_url: str) -> Iterator[TestClient]:
         environment=Environment.TEST,
         database_url=database_url,
         auth_mode=AuthMode.PASSWORD,
-        app_password_hash=PasswordHash.recommended().hash("correct-password"),
+        app_password="correct-password",
         secret_key="test-secret-with-enough-entropy",
         app_api_key="test-api-key",
     )

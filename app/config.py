@@ -4,7 +4,7 @@ from enum import StrEnum
 from functools import lru_cache
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,9 +31,10 @@ class Settings(BaseSettings):
     environment: Environment = Environment.DEVELOPMENT
     database_url: str = "sqlite:///./data/wordstream.db"
     app_timezone: str = "Asia/Shanghai"
+    tts_rate: float = Field(default=1.0, ge=0.5, le=2.0)
 
     auth_mode: AuthMode = AuthMode.DISABLED
-    app_password_hash: SecretStr | None = None
+    app_password: SecretStr | None = None
     secret_key: SecretStr | None = None
     app_api_key: SecretStr | None = None
     session_cookie_name: str = "wordstream_session"
@@ -53,13 +54,15 @@ class Settings(BaseSettings):
         if self.environment is Environment.PRODUCTION:
             if self.auth_mode is AuthMode.DISABLED:
                 raise ValueError("Authentication cannot be disabled in production")
-            if self.secret_key is None:
-                raise ValueError("SECRET_KEY is required in production")
+            if self.secret_key is None or self.app_password is None:
+                raise ValueError(
+                    "SECRET_KEY and APP_PASSWORD are required in production"
+                )
         if self.auth_mode is AuthMode.PASSWORD and (
-            self.app_password_hash is None or self.secret_key is None
+            self.app_password is None or self.secret_key is None
         ):
             raise ValueError(
-                "APP_PASSWORD_HASH and SECRET_KEY are required for password auth"
+                "APP_PASSWORD and SECRET_KEY are required for password auth"
             )
         return self
 

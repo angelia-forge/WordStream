@@ -7,7 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.dependencies import ConfigDep
 
-router = APIRouter(tags=["health"])
+router = APIRouter(prefix="/health", tags=["health"])
 
 
 class HealthResponse(BaseModel):
@@ -19,7 +19,7 @@ class HealthResponse(BaseModel):
     revision: str | None
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.get("", response_model=HealthResponse)
 def health(request: Request, config: ConfigDep) -> HealthResponse:
     engine = cast(Engine, request.app.state.engine)
     try:

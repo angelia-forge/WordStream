@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <header class="flex min-h-14 items-center justify-between border-b border-stone-200">
+    <div class="flex items-center gap-3">
+      <span class="flex size-10 items-center justify-center bg-emerald-600 font-semibold text-white">
+        W
+      </span>
+      <h1 class="text-lg font-semibold">WordStream</h1>
+    </div>
+    {% if csrf_token %}
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button
+          type="submit"
+          class="flex size-11 items-center justify-center text-stone-600 hover:bg-stone-100 hover:text-stone-950 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          title="退出登录"
+        >
+          <i data-lucide="log-out" class="size-5"></i>
+          <span class="sr-only">退出登录</span>
+        </button>
+      </form>
+    {% endif %}
+  </header>
+
+  <section class="flex flex-1 flex-col justify-center py-12">
+    <div class="mb-5 flex size-12 items-center justify-center border border-stone-300 bg-white">
+      <i data-lucide="book-open-text" class="size-6 text-emerald-700"></i>
+    </div>
+    <h2 class="mb-3 text-2xl font-semibold">学习空间</h2>
+    <p class="max-w-sm text-base leading-7 text-stone-600">暂无学习内容</p>
+  </section>
+{% endblock %}

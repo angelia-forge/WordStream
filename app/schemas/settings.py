@@ -11,7 +11,7 @@ class AppSettingRead(BaseModel):
 
     timezone: str
     tts_rate: float
-    default_interval_seconds: int
+    default_interval: int
     daily_goal: int
     updated_at: datetime
 
@@ -19,7 +19,7 @@ class AppSettingRead(BaseModel):
 class AppSettingUpdate(BaseModel):
     timezone: str | None = None
     tts_rate: float | None = Field(default=None, ge=0.5, le=2.0)
-    default_interval_seconds: int | None = Field(default=None, ge=2, le=60)
+    default_interval: int | None = Field(default=None, ge=2, le=60)
     daily_goal: int | None = Field(default=None, ge=0, le=500)
 
     @field_validator("timezone")

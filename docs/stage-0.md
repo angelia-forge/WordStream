@@ -2,21 +2,23 @@
 
 ## Included
 
-- FastAPI application factory and `/health`.
+- FastAPI application factory and `/api/v1/health`.
 - Environment-based configuration with production safety checks.
 - SQLAlchemy engine and request-independent Unit of Work.
 - Alembic initial migration and singleton `AppSetting`.
 - Settings read/update API.
 - UUID request tracing in response headers, errors, and logs.
-- Shared-password session login, CSRF protection, optional API key, and
-  per-process login throttling.
+- Shared-password SessionMiddleware login, CSRF protection, optional API key,
+  and per-process login throttling.
+- Jinja2 application shell, Tailwind standalone build, HTMX, Alpine.js,
+  manifest, and static-only service worker.
 - Pinned pre-commit hooks for Ruff, Black, and mypy, plus pytest coverage and
   GitHub Actions.
 
 ## Not included
 
-Entry import, study plans, player behavior, learning events, statistics, PWA
-assets, and browser E2E tests belong to later stages.
+Vocabulary and entry models, imports, study plans, player behavior, learning
+events, statistics, and browser E2E workflows belong to later stages.
 
 ## Acceptance
 
@@ -27,8 +29,8 @@ pre-commit run --all-files
 pytest
 ```
 
-`GET /health` must return `status=ok`, database status `ok`, and the current
-Alembic revision. CI must run the same checks on Python 3.11.
+`GET /api/v1/health` must return `status=ok`, database status `ok`, and the
+current Alembic revision. CI must run the same checks on Python 3.11.
 
 ## Rollback
 

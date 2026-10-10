@@ -6,7 +6,12 @@ from app.config import AuthMode
 from app.dependencies import AccessDep, ConfigDep
 from app.exceptions import AppError
 from app.schemas.auth import LoginRequest, LoginResponse, SessionResponse
-from app.security import LoginRateLimiter, SessionManager, verify_shared_password
+from app.security import (
+    LoginRateLimiter,
+    clear_session,
+    start_authenticated_session,
+    verify_shared_password,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -15,7 +20,6 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 def login(
     payload: LoginRequest,
     request: Request,
-    response: Response,
     config: ConfigDep,
 ) -> LoginResponse:
     if config.auth_mode is AuthMode.DISABLED:
@@ -33,28 +37,14 @@ def login(
         raise AppError("UNAUTHORIZED", "Invalid credentials", status_code=401)
 
     limiter.clear(client_id)
-    token, session = SessionManager(config).create()
-    response.set_cookie(
-        config.session_cookie_name,
-        token,
-        max_age=config.session_max_age_seconds,
-        httponly=True,
-        secure=config.secure_cookies,
-        samesite="lax",
-        path="/",
-    )
-    return LoginResponse(authenticated=True, csrf_token=session.csrf_token)
+    csrf_token = start_authenticated_session(request)
+    return LoginResponse(authenticated=True, csrf_token=csrf_token)
 
 
 @router.post("/logout", status_code=204)
-def logout(response: Response, config: ConfigDep, _: AccessDep) -> Response:
-    response.delete_cookie(
-        config.session_cookie_name,
-        secure=config.secure_cookies,
-        httponly=True,
-        samesite="lax",
-        path="/",
-    )
+def logout(request: Request, _: AccessDep) -> Response:
+    clear_session(request)
+    response = Response()
     response.status_code = 204
     return response
 

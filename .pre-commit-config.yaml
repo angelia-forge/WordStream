@@ -18,6 +18,6 @@ repos:
           - alembic>=1.14,<2
           - fastapi>=0.115,<1
           - itsdangerous>=2.2,<3
-          - pwdlib[argon2]>=0.2,<1
           - pydantic-settings>=2.7,<3
+          - python-multipart>=0.0.20,<1
           - sqlalchemy>=2.0.36,<3

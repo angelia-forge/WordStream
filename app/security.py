@@ -4,51 +4,31 @@ import hmac
 import secrets
 import time
 from collections import defaultdict, deque
-from dataclasses import dataclass
 
 from fastapi import Request
-from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from pwdlib import PasswordHash
 
 from app.config import AuthMode, Settings
 from app.exceptions import AppError
 
-password_hash = PasswordHash.recommended()
+
+def generate_csrf_token() -> str:
+    return secrets.token_urlsafe(24)
 
 
-@dataclass(frozen=True)
-class SessionData:
-    csrf_token: str
+def start_authenticated_session(request: Request) -> str:
+    csrf_token = generate_csrf_token()
+    request.session.clear()
+    request.session.update(
+        {
+            "authenticated": True,
+            "csrf_token": csrf_token,
+        }
+    )
+    return csrf_token
 
 
-class SessionManager:
-    def __init__(self, settings: Settings) -> None:
-        if settings.secret_key is None:
-            raise ValueError("A secret key is required for signed sessions")
-        self._serializer = URLSafeTimedSerializer(
-            settings.secret_key.get_secret_value(),
-            salt="wordstream-session",
-        )
-        self._max_age = settings.session_max_age_seconds
-
-    def create(self) -> tuple[str, SessionData]:
-        data = SessionData(csrf_token=secrets.token_urlsafe(24))
-        token = self._serializer.dumps(
-            {"authenticated": True, "csrf_token": data.csrf_token}
-        )
-        return token, data
-
-    def load(self, token: str) -> SessionData | None:
-        try:
-            payload = self._serializer.loads(token, max_age=self._max_age)
-        except (BadSignature, SignatureExpired):
-            return None
-        if payload.get("authenticated") is not True:
-            return None
-        csrf_token = payload.get("csrf_token")
-        if not isinstance(csrf_token, str):
-            return None
-        return SessionData(csrf_token=csrf_token)
+def clear_session(request: Request) -> None:
+    request.session.clear()
 
 
 class LoginRateLimiter:
@@ -77,11 +57,11 @@ class LoginRateLimiter:
 
 
 def verify_shared_password(candidate: str, settings: Settings) -> bool:
-    if settings.app_password_hash is None:
+    if settings.app_password is None:
         return False
-    return password_hash.verify(
+    return hmac.compare_digest(
         candidate,
-        settings.app_password_hash.get_secret_value(),
+        settings.app_password.get_secret_value(),
     )
 
 
@@ -97,12 +77,14 @@ def authorize_request(request: Request, settings: Settings) -> None:
     ):
         return
 
-    cookie = request.cookies.get(settings.session_cookie_name)
-    session = SessionManager(settings).load(cookie) if cookie else None
-    if session is None:
+    if request.session.get("authenticated") is not True:
         raise AppError("UNAUTHORIZED", "Authentication required", status_code=401)
 
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
         csrf_token = request.headers.get("X-CSRF-Token", "")
-        if not hmac.compare_digest(csrf_token, session.csrf_token):
+        expected_token = request.session.get("csrf_token")
+        if not isinstance(expected_token, str) or not hmac.compare_digest(
+            csrf_token,
+            expected_token,
+        ):
             raise AppError("CSRF_FAILED", "Invalid CSRF token", status_code=403)

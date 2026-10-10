@@ -29,6 +29,9 @@ class AppSettingService:
     def _get_or_create(self) -> AppSetting:
         setting = self._uow.settings.get()
         if setting is None:
-            setting = AppSetting(timezone=self._config.app_timezone)
+            setting = AppSetting(
+                timezone=self._config.app_timezone,
+                tts_rate=self._config.tts_rate,
+            )
             self._uow.settings.add(setting)
         return setting
