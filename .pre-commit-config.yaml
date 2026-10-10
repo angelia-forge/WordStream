@@ -1,0 +1,23 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.10
+    hooks:
+      - id: ruff
+        args: [--fix]
+  - repo: https://github.com/psf/black-pre-commit-mirror
+    rev: 25.1.0
+    hooks:
+      - id: black
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.14.1
+    hooks:
+      - id: mypy
+        args: [app]
+        pass_filenames: false
+        additional_dependencies:
+          - alembic>=1.14,<2
+          - fastapi>=0.115,<1
+          - itsdangerous>=2.2,<3
+          - pwdlib[argon2]>=0.2,<1
+          - pydantic-settings>=2.7,<3
+          - sqlalchemy>=2.0.36,<3
