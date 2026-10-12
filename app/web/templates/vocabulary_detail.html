@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}{{ vocabulary.name }} · WordStream{% endblock %}
+
+{% block content %}
+  <header class="flex min-h-14 items-center justify-between gap-3 border-b border-stone-200">
+    <div class="flex min-w-0 items-center gap-3">
+      <a
+        href="/"
+        class="flex size-11 shrink-0 items-center justify-center text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        title="返回"
+      >
+        <i data-lucide="arrow-left" class="size-5"></i>
+        <span class="sr-only">返回</span>
+      </a>
+      <div class="min-w-0">
+        <p class="text-sm text-stone-500">{{ vocabulary.entry_count }} 个词条</p>
+        <h1 class="truncate text-xl font-semibold">{{ vocabulary.name }}</h1>
+      </div>
+    </div>
+    <a
+      href="/vocabularies/import"
+      class="flex size-11 shrink-0 items-center justify-center bg-emerald-700 text-white hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+      title="导入词库"
+    >
+      <i data-lucide="plus" class="size-5"></i>
+      <span class="sr-only">导入词库</span>
+    </a>
+  </header>
+
+  <section class="py-6">
+    {% if entries.items %}
+      <div class="hidden overflow-x-auto border border-stone-200 bg-white sm:block">
+        <table class="w-full table-fixed text-left">
+          <thead class="border-b border-stone-200 bg-stone-50 text-sm text-stone-600">
+            <tr>
+              <th class="w-1/4 px-4 py-3 font-medium">词条</th>
+              <th class="w-24 px-4 py-3 font-medium">类型</th>
+              <th class="w-28 px-4 py-3 font-medium">词性</th>
+              <th class="w-36 px-4 py-3 font-medium">音标</th>
+              <th class="px-4 py-3 font-medium">释义</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-stone-200">
+            {% for entry in entries.items %}
+              <tr>
+                <td class="break-words px-4 py-4 font-medium">{{ entry.term }}</td>
+                <td class="px-4 py-4 text-sm text-stone-600">
+                  {{ "搭配" if entry.entry_type == "phrase" else "单词" }}
+                </td>
+                <td class="break-words px-4 py-4 text-sm text-stone-600">
+                  {{ entry.part_of_speech or "—" }}
+                </td>
+                <td class="break-words px-4 py-4 text-sm text-stone-600">
+                  {{ entry.phonetic or "—" }}
+                </td>
+                <td class="break-words px-4 py-4 text-stone-700">{{ entry.meaning }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="divide-y divide-stone-200 border-y border-stone-200 sm:hidden">
+        {% for entry in entries.items %}
+          <article class="py-5">
+            <div class="mb-2 flex items-start justify-between gap-3">
+              <h2 class="break-words text-lg font-semibold">{{ entry.term }}</h2>
+              <span class="shrink-0 bg-stone-100 px-2 py-1 text-xs text-stone-600">
+                {{ "搭配" if entry.entry_type == "phrase" else "单词" }}
+              </span>
+            </div>
+            {% if entry.phonetic or entry.part_of_speech %}
+              <p class="mb-2 text-sm text-stone-500">
+                {{ entry.part_of_speech or "" }}
+                {{ entry.phonetic or "" }}
+              </p>
+            {% endif %}
+            <p class="break-words leading-6 text-stone-700">{{ entry.meaning }}</p>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="border-y border-stone-200 py-12 text-center text-stone-500">
+        暂无词条
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

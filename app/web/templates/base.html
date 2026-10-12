@@ -7,13 +7,13 @@
     <title>{% block title %}WordStream{% endblock %}</title>
     <link rel="manifest" href="/static/manifest.webmanifest">
     <link rel="stylesheet" href="/static/css/app.css">
+    <script defer src="/static/js/app.js"></script>
     <script defer src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"></script>
     <script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
     <script defer src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-    <script defer src="/static/js/app.js"></script>
   </head>
   <body class="min-h-screen bg-stone-50 text-stone-950 antialiased">
-    <main class="mx-auto flex min-h-screen w-full max-w-md flex-col px-5 py-6 sm:px-7">
+    <main class="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 py-6 sm:px-7">
       {% block content %}{% endblock %}
     </main>
   </body>

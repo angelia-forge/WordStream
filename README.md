@@ -3,9 +3,10 @@
 WordStream (单词流) is a mobile-first words and fixed phrases read-along PWA
 built as a modular FastAPI monolith.
 
-The repository is at Stage 0: application shell, SQLite migrations, settings,
-Unit of Work, request tracing, single-user security, and frontend scaffolding.
-No learning-domain functionality is implemented yet.
+The repository is at Stage 1: application shell, SQLite migrations, settings,
+single-user security, and vocabulary import and browsing. Imports support
+pasted text, CSV, TSV, TXT, JSON, and manual entry with a preview-before-commit
+workflow.
 
 ## Architecture
 
@@ -29,6 +30,7 @@ No Node.js installation or frontend package manager is required.
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e ".[dev]"
+python -m playwright install chromium
 cp .env.example .env
 ./scripts/build_css.sh
 alembic upgrade head
@@ -55,6 +57,8 @@ pre-commit run --all-files
 Pytest includes branch coverage and requires at least 80%. Install the Git
 hooks with `pre-commit install`.
 
+The import page is `http://127.0.0.1:8000/vocabularies/import`.
+
 ## Tailwind
 
 `./scripts/build_css.sh` downloads Tailwind CSS standalone `v3.4.17` into the
@@ -75,7 +79,7 @@ contract is:
 
 Production startup rejects missing password or signing-key configuration.
 
-## Stage 0 acceptance
+## Stage 1 acceptance
 
 ```bash
 alembic upgrade head

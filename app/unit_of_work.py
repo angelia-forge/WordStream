@@ -6,10 +6,12 @@ from types import TracebackType
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.repositories.settings import AppSettingRepository
+from app.repositories.vocabularies import VocabularyRepository
 
 
 class AbstractUnitOfWork(ABC):
     settings: AppSettingRepository
+    vocabularies: VocabularyRepository
 
     @abstractmethod
     def __enter__(self) -> AbstractUnitOfWork:
@@ -40,6 +42,7 @@ class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
     def __enter__(self) -> SqlAlchemyUnitOfWork:
         self.session = self._session_factory()
         self.settings = AppSettingRepository(self.session)
+        self.vocabularies = VocabularyRepository(self.session)
         return self
 
     def __exit__(

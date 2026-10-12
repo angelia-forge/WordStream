@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+
+{% block title %}导入词库 · WordStream{% endblock %}
+
+{% block content %}
+  <header class="flex min-h-14 items-center gap-3 border-b border-stone-200">
+    <a
+      href="/"
+      class="flex size-11 items-center justify-center text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+      title="返回"
+    >
+      <i data-lucide="arrow-left" class="size-5"></i>
+      <span class="sr-only">返回</span>
+    </a>
+    <div>
+      <p class="text-sm text-stone-500">词库</p>
+      <h1 class="text-xl font-semibold">导入新词库</h1>
+    </div>
+  </header>
+
+  <section
+    class="py-6"
+    data-import-workspace
+    data-csrf-token="{{ csrf_token }}"
+  >
+    <div
+      class="grid grid-cols-3 border-b border-stone-200"
+      role="tablist"
+      aria-label="导入方式"
+    >
+      <button
+        type="button"
+        class="min-h-12 border-b-2 border-emerald-600 px-2 text-sm font-medium text-emerald-700"
+        data-import-tab="paste"
+        role="tab"
+        aria-selected="true"
+      >
+        粘贴文本
+      </button>
+      <button
+        type="button"
+        class="min-h-12 border-b-2 border-transparent px-2 text-sm font-medium text-stone-500"
+        data-import-tab="upload"
+        role="tab"
+        aria-selected="false"
+      >
+        上传文件
+      </button>
+      <button
+        type="button"
+        class="min-h-12 border-b-2 border-transparent px-2 text-sm font-medium text-stone-500"
+        data-import-tab="manual"
+        role="tab"
+        aria-selected="false"
+      >
+        手动添加
+      </button>
+    </div>
+
+    <form
+      class="space-y-5 pt-6"
+      data-import-form
+      data-import-panel="paste"
+      data-mode="paste"
+    >
+      <label class="block">
+        <span class="mb-2 block text-sm font-medium">词库名称</span>
+        <input
+          name="name"
+          required
+          maxlength="200"
+          class="w-full border border-stone-300 bg-white px-3 py-2 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+        >
+      </label>
+      <label class="block">
+        <span class="mb-2 block text-sm font-medium">词条文本</span>
+        <textarea
+          name="text"
+          required
+          rows="11"
+          class="w-full resize-y border border-stone-300 bg-white px-3 py-3 font-mono text-sm leading-6 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+          placeholder="term | meaning | pos | phonetic"
+        ></textarea>
+      </label>
+      <button
+        type="submit"
+        class="inline-flex min-h-11 w-full items-center justify-center gap-2 bg-emerald-700 px-4 font-medium text-white hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+      >
+        <i data-lucide="scan-search" class="size-5"></i>
+        解析预览
+      </button>
+    </form>
+
+    <form
+      class="space-y-5 pt-6"
+      hidden
+      data-import-form
+      data-import-panel="upload"
+      data-mode="upload"
+    >
+      <label class="block">
+        <span class="mb-2 block text-sm font-medium">词库名称</span>
+        <input
+          name="name"
+          required
+          maxlength="200"
+          class="w-full border border-stone-300 bg-white px-3 py-2 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+        >
+      </label>
+      <label class="block">
+        <span class="mb-2 block text-sm font-medium">文件</span>
+        <input
+          name="file"
+          type="file"
+          required
+          accept=".csv,.tsv,.txt,.json,text/csv,application/json"
+          class="w-full border border-stone-300 bg-white p-2 file:mr-3 file:min-h-10 file:border-0 file:bg-stone-100 file:px-3 file:font-medium"
+        >
+      </label>
+      <button
+        type="submit"
+        class="inline-flex min-h-11 w-full items-center justify-center gap-2 bg-emerald-700 px-4 font-medium text-white hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+      >
+        <i data-lucide="scan-search" class="size-5"></i>
+        解析预览
+      </button>
+    </form>
+
+    <form
+      class="space-y-5 pt-6"
+      hidden
+      data-import-form
+      data-import-panel="manual"
+      data-mode="manual"
+    >
+      <label class="block">
+        <span class="mb-2 block text-sm font-medium">词库名称</span>
+        <input
+          name="name"
+          required
+          maxlength="200"
+          class="w-full border border-stone-300 bg-white px-3 py-2 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+        >
+      </label>
+      <div class="grid gap-5 sm:grid-cols-2">
+        <label class="block">
+          <span class="mb-2 block text-sm font-medium">单词或搭配</span>
+          <input
+            name="term"
+            required
+            class="w-full border border-stone-300 bg-white px-3 py-2 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+          >
+        </label>
+        <label class="block">
+          <span class="mb-2 block text-sm font-medium">类型</span>
+          <select
+            name="entry_type"
+            class="min-h-11 w-full border border-stone-300 bg-white px-3 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+          >
+            <option value="">自动判断</option>
+            <option value="word">单词</option>
+            <option value="phrase">固定搭配</option>
+          </select>
+        </label>
+      </div>
+      <label class="block">
+        <span class="mb-2 block text-sm font-medium">释义</span>
+        <textarea
+          name="meaning"
+          required
+          rows="3"
+          class="w-full resize-y border border-stone-300 bg-white px-3 py-2 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+        ></textarea>
+      </label>
+      <div class="grid gap-5 sm:grid-cols-2">
+        <label class="block">
+          <span class="mb-2 block text-sm font-medium">词性</span>
+          <input
+            name="part_of_speech"
+            class="w-full border border-stone-300 bg-white px-3 py-2 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+          >
+        </label>
+        <label class="block">
+          <span class="mb-2 block text-sm font-medium">音标</span>
+          <input
+            name="phonetic"
+            class="w-full border border-stone-300 bg-white px-3 py-2 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+          >
+        </label>
+      </div>
+      <label class="block">
+        <span class="mb-2 block text-sm font-medium">例句</span>
+        <textarea
+          name="example"
+          rows="2"
+          class="w-full resize-y border border-stone-300 bg-white px-3 py-2 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+        ></textarea>
+      </label>
+      <label class="block">
+        <span class="mb-2 block text-sm font-medium">标签</span>
+        <input
+          name="tags"
+          class="w-full border border-stone-300 bg-white px-3 py-2 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+        >
+      </label>
+      <button
+        type="submit"
+        class="inline-flex min-h-11 w-full items-center justify-center gap-2 bg-emerald-700 px-4 font-medium text-white hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+      >
+        <i data-lucide="scan-search" class="size-5"></i>
+        解析预览
+      </button>
+    </form>
+
+    <section
+      id="import-preview"
+      class="mt-8 border-t border-stone-200 pt-6"
+      aria-live="polite"
+      hidden
+    >
+      <div id="import-summary" class="grid grid-cols-3 gap-2"></div>
+      <div id="import-entries" class="mt-6"></div>
+      <div id="import-errors" class="mt-6"></div>
+      <button
+        id="confirm-import"
+        type="button"
+        class="mt-6 inline-flex min-h-11 w-full items-center justify-center gap-2 bg-stone-950 px-4 font-medium text-white hover:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:bg-stone-300"
+      >
+        <i data-lucide="check" class="size-5"></i>
+        确认导入
+      </button>
+    </section>
+  </section>
+{% endblock %}

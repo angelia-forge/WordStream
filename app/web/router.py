@@ -9,13 +9,14 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app.config import AuthMode
-from app.dependencies import ConfigDep
+from app.dependencies import ConfigDep, UowDep
 from app.security import (
     LoginRateLimiter,
     clear_session,
     start_authenticated_session,
     verify_shared_password,
 )
+from app.services.vocabularies import VocabularyService
 
 WEB_DIR = Path(__file__).resolve().parent
 STATIC_DIR = WEB_DIR / "static"
@@ -26,14 +27,58 @@ router = APIRouter(include_in_schema=False)
 
 @router.get("/", response_class=HTMLResponse)
 def index(request: Request, config: ConfigDep) -> Response:
-    authenticated = request.session.get("authenticated") is True
-    if config.auth_mode is AuthMode.PASSWORD and not authenticated:
-        return RedirectResponse("/login", status_code=303)
+    redirect = _login_redirect(request, config)
+    if redirect is not None:
+        return redirect
     return templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
             "csrf_token": request.session.get("csrf_token", ""),
+        },
+    )
+
+
+@router.get("/vocabularies/import", response_class=HTMLResponse)
+def import_page(request: Request, config: ConfigDep) -> Response:
+    redirect = _login_redirect(request, config)
+    if redirect is not None:
+        return redirect
+    return templates.TemplateResponse(
+        request=request,
+        name="vocabulary_import.html",
+        context={"csrf_token": request.session.get("csrf_token", "")},
+    )
+
+
+@router.get("/vocabularies/{vocabulary_id}", response_class=HTMLResponse)
+def vocabulary_detail(
+    vocabulary_id: int,
+    request: Request,
+    config: ConfigDep,
+    uow: UowDep,
+) -> Response:
+    redirect = _login_redirect(request, config)
+    if redirect is not None:
+        return redirect
+    service = VocabularyService(uow)
+    vocabulary = service.get_vocabulary(vocabulary_id)
+    entries = service.list_entries(
+        vocabulary_id,
+        page=1,
+        page_size=100,
+        query=None,
+        tag=None,
+        sort="term",
+        order="asc",
+    )
+    return templates.TemplateResponse(
+        request=request,
+        name="vocabulary_detail.html",
+        context={
+            "csrf_token": request.session.get("csrf_token", ""),
+            "vocabulary": vocabulary,
+            "entries": entries,
         },
     )
 
@@ -96,3 +141,13 @@ def service_worker() -> FileResponse:
         media_type="application/javascript",
         headers={"Service-Worker-Allowed": "/"},
     )
+
+
+def _login_redirect(
+    request: Request,
+    config: ConfigDep,
+) -> RedirectResponse | None:
+    authenticated = request.session.get("authenticated") is True
+    if config.auth_mode is AuthMode.PASSWORD and not authenticated:
+        return RedirectResponse("/login", status_code=303)
+    return None

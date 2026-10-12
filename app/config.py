@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/wordstream.db"
     app_timezone: str = "Asia/Shanghai"
     tts_rate: float = Field(default=1.0, ge=0.5, le=2.0)
+    import_max_bytes: int = Field(default=5_242_880, ge=1)
 
     auth_mode: AuthMode = AuthMode.DISABLED
     app_password: SecretStr | None = None

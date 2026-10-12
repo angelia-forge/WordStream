@@ -1,7 +1,8 @@
 # Stage 1 API Planning Baseline
 
-This document preserves approved planning decisions for later stages. None of
-these endpoints or models are implemented in Stage 0.
+This document records the Stage 1 vocabulary contract and preserves approved
+planning decisions for later study stages. The vocabulary endpoints and models
+are implemented; study and learning-history items remain planning baselines.
 
 ## Vocabulary endpoints
 
@@ -10,8 +11,11 @@ these endpoints or models are implemented in Stage 0.
 - Normalization is `lower(trim(collapse_whitespace(term)))`; the original term
   retains internal whitespace.
 - Entry uniqueness is scoped by `UNIQUE(vocabulary_id, normalized_term)`.
-- Import uses `multipart/form-data` with `file`, `name`, and
-  `duplicate_policy=skip`.
+- Preview uses `POST /api/v1/vocabularies/import/preview`; commit uses
+  `POST /api/v1/vocabularies/import`. Both accept `multipart/form-data` with
+  exactly one of `file` or `text`, plus `name` and `duplicate_policy=skip`.
+- Preview returns a SHA-256 `preview_digest`. Commit reparses the source and
+  rejects changed content or options with `409 PREVIEW_MISMATCH`.
 - List endpoints use `page >= 1`, `1 <= page_size <= 100`, `q`, an enumerated
   `sort`, and `order=asc|desc`.
 - Deletion uses

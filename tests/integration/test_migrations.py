@@ -23,9 +23,13 @@ def test_alembic_upgrades_empty_database_to_head(
 
     engine = create_engine(database_url)
     try:
-        columns = {
+        setting_columns = {
             column["name"] for column in inspect(engine).get_columns("app_settings")
         }
+        entry_columns = {
+            column["name"] for column in inspect(engine).get_columns("entries")
+        }
+        table_names = set(inspect(engine).get_table_names())
         with engine.connect() as connection:
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
@@ -35,6 +39,8 @@ def test_alembic_upgrades_empty_database_to_head(
         get_settings.cache_clear()
 
     assert database_path.exists()
-    assert "default_interval" in columns
-    assert "default_interval_seconds" not in columns
-    assert revision == "20261010_0002"
+    assert "default_interval" in setting_columns
+    assert "default_interval_seconds" not in setting_columns
+    assert {"vocabularies", "entries"}.issubset(table_names)
+    assert {"normalized_term", "entry_type", "tags"}.issubset(entry_columns)
+    assert revision == "20261012_0003"
