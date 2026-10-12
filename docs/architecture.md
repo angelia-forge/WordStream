@@ -2,10 +2,10 @@
 
 ## Scope
 
-Stage 0 establishes a mobile-first FastAPI application shell with SQLite,
-server-rendered pages, migrations, request tracing, and a single-user security
-boundary. It contains no vocabulary, entry, study-plan, player, or learning
-event implementation.
+WordStream is a mobile-first FastAPI application with SQLite, server-rendered
+pages, migrations, request tracing, and a single-user security boundary.
+Vocabulary import and management use the same layered application structure as
+the settings foundation.
 
 ## Layers
 
@@ -36,6 +36,15 @@ causes rollback when the Unit of Work exits.
 Alembic owns all schema changes. Application startup never calls
 `create_all`. CI and integration tests verify that an empty SQLite database can
 upgrade to `head` and that model metadata has no pending migration operations.
+
+## Vocabulary deletion
+
+Vocabulary deletion is one service-owned Unit of Work transaction. Database
+foreign keys cascade deletion to entries, study plans, and review states.
+Learning events are retained with `entry_id` set to null and contain immutable
+term, vocabulary, timezone, and activity-date snapshots. Historical statistics
+read only those snapshots, so deleting active study data does not alter totals
+or streaks. See [ADR 004](adr/004-history-retention.md).
 
 ## Security boundary
 

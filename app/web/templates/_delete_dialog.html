@@ -1,0 +1,37 @@
+<dialog
+  id="delete-vocabulary-dialog"
+  class="w-[calc(100%-2rem)] max-w-sm border border-stone-200 bg-white p-0 text-stone-950 shadow-xl backdrop:bg-stone-950/40"
+  data-delete-dialog
+>
+  <div class="p-5">
+    <div class="mb-4 flex items-start gap-3">
+      <span class="flex size-10 shrink-0 items-center justify-center bg-red-50 text-red-700">
+        <i data-lucide="trash-2" class="size-5"></i>
+      </span>
+      <div>
+        <h2 class="text-lg font-semibold">删除词库</h2>
+        <p class="mt-1 text-sm leading-6 text-stone-600">
+          将删除“<span data-delete-name></span>”及其学习状态，历史记录会保留。
+        </p>
+      </div>
+    </div>
+    <p class="hidden border-l-2 border-red-500 pl-3 text-sm text-red-700" data-delete-error></p>
+    <div class="mt-5 grid grid-cols-2 gap-3">
+      <button
+        type="button"
+        class="min-h-11 border border-stone-300 px-4 font-medium hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        data-delete-cancel
+      >
+        取消
+      </button>
+      <button
+        type="button"
+        class="inline-flex min-h-11 items-center justify-center gap-2 bg-red-700 px-4 font-medium text-white hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-stone-300"
+        data-delete-confirm
+      >
+        <i data-lucide="trash-2" class="size-4"></i>
+        确认删除
+      </button>
+    </div>
+  </div>
+</dialog>

@@ -128,7 +128,7 @@ def delete_vocabulary(
     vocabulary_id: int,
     uow: UowDep,
     _: AccessDep,
-    confirm_id: int,
+    confirm_id: int | None = None,
 ) -> Response:
     VocabularyService(uow).delete(vocabulary_id, confirm_id=confirm_id)
     return Response(status_code=204)

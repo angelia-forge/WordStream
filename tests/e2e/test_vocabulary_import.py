@@ -7,19 +7,27 @@ import sys
 import time
 import urllib.request
 from collections.abc import Iterator
+from datetime import UTC, datetime
+from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import pytest
 from playwright.sync_api import Browser, Error, Page, sync_playwright
+from sqlalchemy import func, select
+
+from app.config import AuthMode, Environment, Settings
+from app.db import create_database_engine, create_session_factory
+from app.models.learning import LearningEvent, ReviewState, StudyPlan
+from app.models.vocabulary import Entry
 
 
 @pytest.fixture(scope="module")
-def live_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+def e2e_database_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     database_path = tmp_path_factory.mktemp("e2e") / "wordstream.db"
-    port = _free_port()
-    base_url = f"http://127.0.0.1:{port}"
+    database_url = f"sqlite:///{database_path}"
     env = {
         **os.environ,
-        "DATABASE_URL": f"sqlite:///{database_path}",
+        "DATABASE_URL": database_url,
         "ENVIRONMENT": "test",
         "AUTH_MODE": "disabled",
     }
@@ -30,6 +38,19 @@ def live_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         capture_output=True,
         text=True,
     )
+    return database_url
+
+
+@pytest.fixture(scope="module")
+def live_server(e2e_database_url: str) -> Iterator[str]:
+    port = _free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    env = {
+        **os.environ,
+        "DATABASE_URL": e2e_database_url,
+        "ENVIRONMENT": "test",
+        "AUTH_MODE": "disabled",
+    }
     process = subprocess.Popen(
         [
             sys.executable,
@@ -123,6 +144,99 @@ def test_csv_upload_import(mobile_page: Page, live_server: str) -> None:
     assert mobile_page.get_by_role("heading", name="Uploaded words").is_visible()
     assert mobile_page.locator("article").get_by_text("focus", exact=True).is_visible()
     assert _has_horizontal_overflow(mobile_page) is False
+
+
+def test_mobile_delete_retains_history_statistics(
+    mobile_page: Page,
+    live_server: str,
+    e2e_database_url: str,
+) -> None:
+    mobile_page.goto(f"{live_server}/vocabularies/import")
+    form = mobile_page.locator('form[data-mode="paste"]')
+    form.locator('input[name="name"]').fill("Retained history")
+    form.locator('textarea[name="text"]').fill("term|meaning\nfocus|专注")
+    form.get_by_role("button", name="解析预览").click()
+    mobile_page.locator("#import-preview").wait_for(state="visible")
+    mobile_page.get_by_role("button", name="确认导入").click()
+    mobile_page.wait_for_url("**/vocabularies/*")
+    vocabulary_id = int(urlparse(mobile_page.url).path.rsplit("/", 1)[-1])
+
+    config = Settings(
+        environment=Environment.TEST,
+        auth_mode=AuthMode.DISABLED,
+        database_url=e2e_database_url,
+    )
+    engine = create_database_engine(config)
+    session_factory = create_session_factory(engine)
+    local_today = datetime.now(ZoneInfo(config.app_timezone)).date()
+    try:
+        with session_factory() as session:
+            entry = session.scalar(
+                select(Entry).where(Entry.vocabulary_id == vocabulary_id)
+            )
+            assert entry is not None
+            session.add(StudyPlan(vocabulary_id=vocabulary_id))
+            session.add(ReviewState(entry_id=entry.id))
+            session.add(
+                LearningEvent(
+                    entry_id=entry.id,
+                    term_key=entry.normalized_term,
+                    term_snapshot=entry.term,
+                    vocabulary_id_snapshot=vocabulary_id,
+                    vocabulary_name_snapshot="Retained history",
+                    result="remembered",
+                    attempts=1,
+                    occurred_at=datetime.now(UTC),
+                    timezone=config.app_timezone,
+                    activity_date=local_today,
+                )
+            )
+            session.commit()
+    finally:
+        engine.dispose()
+
+    mobile_page.goto(f"{live_server}/statistics")
+    assert (
+        mobile_page.get_by_text("学习记录").locator("..").get_by_text("1").is_visible()
+    )
+    assert (
+        mobile_page.get_by_text("连续学习天数")
+        .locator("..")
+        .get_by_text("1")
+        .is_visible()
+    )
+
+    mobile_page.goto(f"{live_server}/vocabularies")
+    card = mobile_page.locator("article", has_text="Retained history")
+    card.get_by_role("button", name="删除 Retained history").click()
+    dialog = mobile_page.get_by_role("dialog")
+    assert dialog.is_visible()
+    dialog.get_by_role("button", name="确认删除").click()
+    mobile_page.wait_for_url(f"{live_server}/vocabularies")
+
+    mobile_page.goto(f"{live_server}/statistics")
+    assert (
+        mobile_page.get_by_text("学习记录").locator("..").get_by_text("1").is_visible()
+    )
+    assert (
+        mobile_page.get_by_text("连续学习天数")
+        .locator("..")
+        .get_by_text("1")
+        .is_visible()
+    )
+    assert _has_horizontal_overflow(mobile_page) is False
+    assert _small_visible_controls(mobile_page) == []
+
+    engine = create_database_engine(config)
+    session_factory = create_session_factory(engine)
+    try:
+        with session_factory() as session:
+            assert session.scalar(select(func.count()).select_from(LearningEvent)) == 1
+            event = session.scalar(select(LearningEvent))
+            assert event is not None
+            assert event.entry_id is None
+    finally:
+        engine.dispose()
 
 
 def _free_port() -> int:

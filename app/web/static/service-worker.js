@@ -1,4 +1,4 @@
-const CACHE_NAME = "wordstream-shell-v3";
+const CACHE_NAME = "wordstream-shell-v4";
 const SHELL_ASSETS = [
   "/static/css/app.css",
   "/static/js/app.js",

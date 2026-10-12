@@ -1,8 +1,9 @@
 # Stage 1 API Planning Baseline
 
 This document records the Stage 1 vocabulary contract and preserves approved
-planning decisions for later study stages. The vocabulary endpoints and models
-are implemented; study and learning-history items remain planning baselines.
+planning decisions for later study stages. Vocabulary management and the
+minimal history-retention schema are implemented; study-session endpoints
+remain planning baselines.
 
 ## Vocabulary endpoints
 
@@ -20,7 +21,9 @@ are implemented; study and learning-history items remain planning baselines.
   `sort`, and `order=asc|desc`.
 - Deletion uses
   `DELETE /api/v1/vocabularies/{id}?confirm_id={id}`. A missing or mismatched
-  confirmation returns `409 CONFIRMATION_REQUIRED`.
+  confirmation returns `409 CONFIRMATION_REQUIRED`. Entries, the vocabulary
+  study plan, and entry review states cascade; learning events remain with
+  `entry_id=NULL`.
 - A study plan has `UNIQUE(vocabulary_id)` and is upserted with `PUT`.
 
 ## Study endpoints

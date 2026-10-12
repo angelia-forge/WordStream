@@ -188,7 +188,12 @@ class VocabularyService:
                 total=total,
             )
 
-    def delete(self, vocabulary_id: int, *, confirm_id: int) -> None:
+    def list_tags(self, vocabulary_id: int) -> list[str]:
+        with self._uow:
+            self._require_vocabulary(vocabulary_id)
+            return list(self._uow.vocabularies.list_tags(vocabulary_id))
+
+    def delete(self, vocabulary_id: int, *, confirm_id: int | None) -> None:
         if confirm_id != vocabulary_id:
             raise AppError(
                 "CONFIRMATION_REQUIRED",

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}学习统计 · WordStream{% endblock %}
+
+{% block content %}
+  <header class="flex min-h-14 items-center gap-3 border-b border-stone-200">
+    <a
+      href="/"
+      class="flex size-11 shrink-0 items-center justify-center text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+      title="返回首页"
+    >
+      <i data-lucide="arrow-left" class="size-5"></i>
+      <span class="sr-only">返回首页</span>
+    </a>
+    <h1 class="text-xl font-semibold">学习统计</h1>
+  </header>
+
+  <section class="grid gap-px bg-stone-200 py-6 sm:grid-cols-3" aria-label="学习统计摘要">
+    <article class="bg-white p-5">
+      <i data-lucide="flame" class="mb-5 size-5 text-red-600"></i>
+      <strong class="block text-3xl font-semibold">{{ summary.streak }}</strong>
+      <span class="mt-1 block text-sm text-stone-500">连续学习天数</span>
+    </article>
+    <article class="bg-white p-5">
+      <i data-lucide="calendar-check" class="mb-5 size-5 text-emerald-700"></i>
+      <strong class="block text-3xl font-semibold">{{ summary.learned_days }}</strong>
+      <span class="mt-1 block text-sm text-stone-500">累计学习天数</span>
+    </article>
+    <article class="bg-white p-5">
+      <i data-lucide="list-checks" class="mb-5 size-5 text-blue-700"></i>
+      <strong class="block text-3xl font-semibold">{{ summary.total_events }}</strong>
+      <span class="mt-1 block text-sm text-stone-500">学习记录</span>
+    </article>
+  </section>
+{% endblock %}

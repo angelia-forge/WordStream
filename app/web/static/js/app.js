@@ -12,6 +12,8 @@ function initializeApp() {
     navigator.serviceWorker.register("/service-worker.js");
   }
 
+  initializeDeleteDialogs();
+
   const workspace = document.querySelector("[data-import-workspace]");
   if (!workspace) {
     return;
@@ -210,6 +212,64 @@ function initializeApp() {
     item.append(count, caption);
     return item;
   }
+}
+
+function initializeDeleteDialogs() {
+  const dialog = document.querySelector("[data-delete-dialog]");
+  if (!dialog) {
+    return;
+  }
+
+  const name = dialog.querySelector("[data-delete-name]");
+  const error = dialog.querySelector("[data-delete-error]");
+  const cancelButton = dialog.querySelector("[data-delete-cancel]");
+  const confirmButton = dialog.querySelector("[data-delete-confirm]");
+  let selected = null;
+
+  document.querySelectorAll("[data-delete-trigger]").forEach((trigger) => {
+    trigger.addEventListener("click", () => {
+      selected = trigger;
+      name.textContent = trigger.dataset.vocabularyName || "";
+      error.hidden = true;
+      error.textContent = "";
+      confirmButton.disabled = false;
+      dialog.showModal();
+    });
+  });
+
+  cancelButton.addEventListener("click", () => dialog.close());
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) {
+      dialog.close();
+    }
+  });
+
+  confirmButton.addEventListener("click", async () => {
+    if (!selected) {
+      return;
+    }
+    confirmButton.disabled = true;
+    const vocabularyId = selected.dataset.vocabularyId;
+    const token = selected.dataset.csrfToken;
+    try {
+      const response = await fetch(
+        `/api/v1/vocabularies/${encodeURIComponent(vocabularyId)}?confirm_id=${encodeURIComponent(vocabularyId)}`,
+        {
+          method: "DELETE",
+          headers: token ? { "X-CSRF-Token": token } : {},
+        },
+      );
+      if (!response.ok) {
+        const payload = await response.json();
+        throw new Error(payload.error?.message || "删除失败");
+      }
+      window.location.assign(selected.dataset.redirectUrl || "/vocabularies");
+    } catch (reason) {
+      error.textContent = reason instanceof Error ? reason.message : "删除失败";
+      error.hidden = false;
+      confirmButton.disabled = false;
+    }
+  });
 }
 
 initializeApp();

@@ -41,6 +41,12 @@ def test_alembic_upgrades_empty_database_to_head(
     assert database_path.exists()
     assert "default_interval" in setting_columns
     assert "default_interval_seconds" not in setting_columns
-    assert {"vocabularies", "entries"}.issubset(table_names)
+    assert {
+        "vocabularies",
+        "entries",
+        "study_plans",
+        "review_states",
+        "learning_events",
+    }.issubset(table_names)
     assert {"normalized_term", "entry_type", "tags"}.issubset(entry_columns)
-    assert revision == "20261012_0003"
+    assert revision == "20261012_0004"

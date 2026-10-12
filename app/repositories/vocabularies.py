@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import exists, func, or_, select, true
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.models.vocabulary import Entry, Vocabulary
@@ -90,3 +90,15 @@ class VocabularyRepository:
         items = list(self._session.scalars(statement))
         total = self._session.scalar(count_statement) or 0
         return items, total
+
+    def list_tags(self, vocabulary_id: int) -> Sequence[str]:
+        json_tags = func.json_each(Entry.tags).table_valued("key", "value")
+        statement = (
+            select(json_tags.c.value)
+            .select_from(Entry)
+            .join(json_tags, true())
+            .where(Entry.vocabulary_id == vocabulary_id)
+            .distinct()
+            .order_by(func.lower(json_tags.c.value))
+        )
+        return list(self._session.scalars(statement))

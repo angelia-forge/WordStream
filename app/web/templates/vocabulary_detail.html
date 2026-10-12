@@ -6,29 +6,99 @@
   <header class="flex min-h-14 items-center justify-between gap-3 border-b border-stone-200">
     <div class="flex min-w-0 items-center gap-3">
       <a
-        href="/"
+        href="/vocabularies"
         class="flex size-11 shrink-0 items-center justify-center text-stone-600 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-        title="返回"
+        title="返回词库"
       >
         <i data-lucide="arrow-left" class="size-5"></i>
-        <span class="sr-only">返回</span>
+        <span class="sr-only">返回词库</span>
       </a>
       <div class="min-w-0">
         <p class="text-sm text-stone-500">{{ vocabulary.entry_count }} 个词条</p>
         <h1 class="truncate text-xl font-semibold">{{ vocabulary.name }}</h1>
       </div>
     </div>
-    <a
-      href="/vocabularies/import"
-      class="flex size-11 shrink-0 items-center justify-center bg-emerald-700 text-white hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-      title="导入词库"
+    <button
+      type="button"
+      class="flex size-11 shrink-0 items-center justify-center text-stone-500 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+      title="删除词库"
+      data-delete-trigger
+      data-vocabulary-id="{{ vocabulary.id }}"
+      data-vocabulary-name="{{ vocabulary.name }}"
+      data-redirect-url="/vocabularies"
+      data-csrf-token="{{ csrf_token }}"
     >
-      <i data-lucide="plus" class="size-5"></i>
-      <span class="sr-only">导入词库</span>
-    </a>
+      <i data-lucide="trash-2" class="size-5"></i>
+      <span class="sr-only">删除词库</span>
+    </button>
   </header>
 
-  <section class="py-6">
+  <form method="get" action="/vocabularies/{{ vocabulary.id }}" class="space-y-3 py-5">
+    <label class="relative block">
+      <span class="sr-only">搜索词条或释义</span>
+      <i
+        data-lucide="search"
+        class="pointer-events-none absolute left-3 top-1/2 size-5 -translate-y-1/2 text-stone-400"
+      ></i>
+      <input
+        type="search"
+        name="q"
+        value="{{ q }}"
+        placeholder="搜索词条或释义"
+        class="min-h-11 w-full border border-stone-300 bg-white pl-10 pr-3 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+      >
+    </label>
+    <div class="grid grid-cols-2 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+      <label>
+        <span class="sr-only">标签</span>
+        <select
+          name="tag"
+          class="min-h-11 w-full border border-stone-300 bg-white px-3 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+        >
+          <option value="">全部标签</option>
+          {% for item in tags %}
+            <option value="{{ item }}" {% if selected_tag == item %}selected{% endif %}>
+              {{ item }}
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span class="sr-only">排序方式</span>
+        <select
+          name="sort"
+          class="min-h-11 w-full border border-stone-300 bg-white px-3 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+        >
+          <option value="term" {% if sort == "term" %}selected{% endif %}>按词条</option>
+          <option value="created_at" {% if sort == "created_at" %}selected{% endif %}>
+            按添加时间
+          </option>
+        </select>
+      </label>
+      <div class="col-span-2 grid grid-cols-[1fr_auto] gap-3 sm:col-span-1">
+        <label>
+          <span class="sr-only">排序方向</span>
+          <select
+            name="order"
+            class="min-h-11 w-full border border-stone-300 bg-white px-3 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+          >
+            <option value="asc" {% if order == "asc" %}selected{% endif %}>升序</option>
+            <option value="desc" {% if order == "desc" %}selected{% endif %}>降序</option>
+          </select>
+        </label>
+        <button
+          type="submit"
+          class="min-h-11 bg-stone-900 px-4 font-medium text-white hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        >
+          筛选
+        </button>
+      </div>
+    </div>
+  </form>
+
+  <p class="mb-3 text-sm text-stone-500">找到 {{ entries.total }} 个词条</p>
+
+  <section>
     {% if entries.items %}
       <div class="hidden overflow-x-auto border border-stone-200 bg-white sm:block">
         <table class="w-full table-fixed text-left">
@@ -71,19 +141,58 @@
               </span>
             </div>
             {% if entry.phonetic or entry.part_of_speech %}
-              <p class="mb-2 text-sm text-stone-500">
+              <p class="mb-2 break-words text-sm text-stone-500">
                 {{ entry.part_of_speech or "" }}
                 {{ entry.phonetic or "" }}
               </p>
             {% endif %}
             <p class="break-words leading-6 text-stone-700">{{ entry.meaning }}</p>
+            {% if entry.tags %}
+              <div class="mt-3 flex flex-wrap gap-2">
+                {% for entry_tag in entry.tags %}
+                  <span class="bg-emerald-50 px-2 py-1 text-xs text-emerald-800">
+                    {{ entry_tag }}
+                  </span>
+                {% endfor %}
+              </div>
+            {% endif %}
           </article>
         {% endfor %}
       </div>
     {% else %}
       <div class="border-y border-stone-200 py-12 text-center text-stone-500">
-        暂无词条
+        没有匹配的词条
       </div>
     {% endif %}
   </section>
+
+  {% if previous_url or next_url %}
+    <nav class="mt-6 flex items-center justify-between gap-3" aria-label="词条分页">
+      {% if previous_url %}
+        <a
+          href="{{ previous_url }}"
+          class="inline-flex min-h-11 items-center gap-2 border border-stone-300 bg-white px-4 font-medium hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        >
+          <i data-lucide="chevron-left" class="size-4"></i>
+          上一页
+        </a>
+      {% else %}
+        <span></span>
+      {% endif %}
+      <span class="text-sm text-stone-500">第 {{ entries.page }} 页</span>
+      {% if next_url %}
+        <a
+          href="{{ next_url }}"
+          class="inline-flex min-h-11 items-center gap-2 border border-stone-300 bg-white px-4 font-medium hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        >
+          下一页
+          <i data-lucide="chevron-right" class="size-4"></i>
+        </a>
+      {% else %}
+        <span></span>
+      {% endif %}
+    </nav>
+  {% endif %}
+
+  {% include "_delete_dialog.html" %}
 {% endblock %}
