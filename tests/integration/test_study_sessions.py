@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -192,6 +193,60 @@ def test_batch_persists_progress_and_is_idempotent(
     with session_factory() as session:
         assert session.scalar(select(func.count()).select_from(SessionAttempt)) == 3
         assert session.scalar(select(func.count()).select_from(LearningEvent)) == 3
+
+
+def test_new_events_capture_the_current_database_timezone(
+    client: TestClient,
+) -> None:
+    vocabulary_id = import_vocabulary(client, count=2)
+    configure_plan(client, vocabulary_id)
+    created = client.post(
+        "/api/v1/study-sessions",
+        json={"vocabulary_id": vocabulary_id},
+    ).json()
+    session_id = created["session"]["id"]
+    first, second = created["items"]
+
+    assert (
+        client.patch(
+            "/api/v1/settings",
+            json={"timezone": "UTC"},
+        ).status_code
+        == 200
+    )
+    first_time = datetime.now(UTC)
+    first_response = client.post(
+        f"/api/v1/study-sessions/{session_id}/outcomes/batch",
+        json={"outcomes": [outcome(first["id"], "seen", occurred_at=first_time)]},
+    )
+    assert first_response.status_code == 200
+
+    assert (
+        client.patch(
+            "/api/v1/settings",
+            json={"timezone": "America/New_York"},
+        ).status_code
+        == 200
+    )
+    second_time = datetime.now(UTC)
+    second_response = client.post(
+        f"/api/v1/study-sessions/{session_id}/outcomes/batch",
+        json={"outcomes": [outcome(second["id"], "again", occurred_at=second_time)]},
+    )
+    assert second_response.status_code == 200
+
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        events = list(session.scalars(select(LearningEvent).order_by(LearningEvent.id)))
+        assert [event.timezone for event in events] == [
+            "UTC",
+            "America/New_York",
+        ]
+        assert events[0].activity_date == first_time.date()
+        assert (
+            events[1].activity_date
+            == second_time.astimezone(ZoneInfo("America/New_York")).date()
+        )
 
 
 def test_batch_is_atomic_and_rejects_reused_client_event_id(

@@ -111,8 +111,19 @@ batch transaction; unsettled items do not create history.
 
 ## Statistics definitions
 
-- `today_learned`: distinct vocabulary-scoped term keys within event-local
-  activity dates.
+- `today_learned`: distinct term keys whose stored event-local activity date
+  equals today in the current application timezone.
 - `due_reviews`: active, non-deleted entries with `next_review_at <= now`.
-- `streak`: consecutive event-local activity dates. If today has no event,
-  calculation starts from yesterday.
+- `streak`: consecutive stored event-local activity dates. If today has no
+  event, calculation starts from yesterday; two inactive days yield zero.
+- `total_entries`: active, non-deleted entries.
+- `vocabulary_id` filters history through the event vocabulary snapshot and
+  live counts through current entries. Deleted vocabulary ids can still query
+  retained history but have zero live counts.
+- Outcome submission reads `AppSetting.timezone` inside the batch transaction
+  and stores both that timezone and the derived activity date. A timezone
+  update never rewrites historical events.
+
+`GET /api/v1/statistics/today` returns today's learned count, streak, and total
+entries. `GET /api/v1/reviews/today` returns the current due-review count. Both
+accept an optional positive `vocabulary_id`.

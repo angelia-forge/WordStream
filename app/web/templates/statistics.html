@@ -15,21 +15,57 @@
     <h1 class="text-xl font-semibold">学习统计</h1>
   </header>
 
-  <section class="grid gap-px bg-stone-200 py-6 sm:grid-cols-3" aria-label="学习统计摘要">
+  <form method="get" class="flex items-end gap-3 border-b border-stone-200 py-5">
+    <label class="min-w-0 flex-1 text-sm font-medium text-stone-700">
+      词库
+      <select
+        name="vocabulary_id"
+        class="mt-2 w-full border border-stone-300 bg-white px-3 focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+      >
+        <option value="">全部词库</option>
+        {% for vocabulary in vocabularies %}
+          <option
+            value="{{ vocabulary.id }}"
+            {% if selected_vocabulary_id == vocabulary.id %}selected{% endif %}
+          >
+            {{ vocabulary.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <button
+      type="submit"
+      class="inline-flex min-h-11 items-center gap-2 bg-stone-900 px-4 font-medium text-white hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-stone-800 focus:ring-offset-2"
+    >
+      <i data-lucide="filter" class="size-4"></i>
+      筛选
+    </button>
+  </form>
+
+  <p class="pt-5 text-sm text-stone-500">
+    {{ summary.date }} · {{ summary.timezone }}
+  </p>
+
+  <section class="grid gap-px bg-stone-200 py-5 sm:grid-cols-2" aria-label="今日学习统计">
+    <article class="bg-white p-5">
+      <i data-lucide="book-check" class="mb-5 size-5 text-emerald-700"></i>
+      <strong class="block text-3xl font-semibold">{{ summary.learned_terms }}</strong>
+      <span class="mt-1 block text-sm text-stone-500">今日已学</span>
+    </article>
+    <article class="bg-white p-5">
+      <i data-lucide="clock-3" class="mb-5 size-5 text-amber-700"></i>
+      <strong class="block text-3xl font-semibold">{{ reviews.due_reviews }}</strong>
+      <span class="mt-1 block text-sm text-stone-500">今日待复习</span>
+    </article>
     <article class="bg-white p-5">
       <i data-lucide="flame" class="mb-5 size-5 text-red-600"></i>
       <strong class="block text-3xl font-semibold">{{ summary.streak }}</strong>
       <span class="mt-1 block text-sm text-stone-500">连续学习天数</span>
     </article>
     <article class="bg-white p-5">
-      <i data-lucide="calendar-check" class="mb-5 size-5 text-emerald-700"></i>
-      <strong class="block text-3xl font-semibold">{{ summary.learned_days }}</strong>
-      <span class="mt-1 block text-sm text-stone-500">累计学习天数</span>
-    </article>
-    <article class="bg-white p-5">
-      <i data-lucide="list-checks" class="mb-5 size-5 text-blue-700"></i>
-      <strong class="block text-3xl font-semibold">{{ summary.total_events }}</strong>
-      <span class="mt-1 block text-sm text-stone-500">学习记录</span>
+      <i data-lucide="library-big" class="mb-5 size-5 text-blue-700"></i>
+      <strong class="block text-3xl font-semibold">{{ summary.total_entries }}</strong>
+      <span class="mt-1 block text-sm text-stone-500">总词条数</span>
     </article>
   </section>
 {% endblock %}

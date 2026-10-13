@@ -186,6 +186,10 @@ class StudySessionService:
                     "Study session is not active",
                     status_code=409,
                 )
+            setting = self._uow.settings.get() if new_outcomes else None
+            event_timezone = (
+                setting.timezone if setting is not None else self._settings.app_timezone
+            )
 
             accepted = 0
             duplicates = len(batch.outcomes) - len(unique_outcomes)
@@ -206,7 +210,12 @@ class StudySessionService:
                         occurred_at=outcome.occurred_at,
                     )
                 )
-                self._write_learning_result(study_session, item, outcome)
+                self._write_learning_result(
+                    study_session,
+                    item,
+                    outcome,
+                    timezone=event_timezone,
+                )
                 accepted += 1
 
             study_session.current_index = sum(
@@ -288,11 +297,11 @@ class StudySessionService:
         study_session: StudySession,
         item: SessionItem,
         outcome: OutcomeWrite,
+        *,
+        timezone: str,
     ) -> None:
         occurred_at = outcome.occurred_at
-        local_date = occurred_at.astimezone(
-            ZoneInfo(self._settings.app_timezone)
-        ).date()
+        local_date = occurred_at.astimezone(ZoneInfo(timezone)).date()
         snapshot = item.entry_snapshot
         self._uow.study_sessions.add_learning_event(
             LearningEvent(
@@ -309,7 +318,7 @@ class StudySessionService:
                 attempt_count=item.attempt_count,
                 client_attempt_count=outcome.attempt_count,
                 occurred_at=occurred_at,
-                timezone=self._settings.app_timezone,
+                timezone=timezone,
                 activity_date=local_date,
             )
         )

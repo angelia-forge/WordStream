@@ -460,17 +460,23 @@ def test_mobile_delete_retains_history_statistics(
     finally:
         engine.dispose()
 
-    expected_total = mobile_page.request.get(f"{live_server}/api/v1/statistics").json()[
-        "total_events"
-    ]
+    today_statistics = mobile_page.request.get(
+        f"{live_server}/api/v1/statistics/today"
+    ).json()
+    expected_learned = today_statistics["learned_terms"]
+    expected_entries = today_statistics["total_entries"]
+    expected_event_total = mobile_page.request.get(
+        f"{live_server}/api/v1/statistics"
+    ).json()["total_events"]
     mobile_page.goto(f"{live_server}/statistics")
-    statistics = mobile_page.locator("article", has_text="学习记录")
-    assert statistics.get_by_text(str(expected_total), exact=True).is_visible()
+    statistics = mobile_page.locator("article", has_text="今日已学")
+    assert statistics.get_by_text(str(expected_learned), exact=True).is_visible()
     assert (
         mobile_page.locator("article", has_text="连续学习天数")
         .get_by_text("1", exact=True)
         .is_visible()
     )
+    assert mobile_page.get_by_label("词库").is_visible()
 
     mobile_page.goto(f"{live_server}/vocabularies")
     card = mobile_page.locator("article", has_text="Retained history")
@@ -485,11 +491,16 @@ def test_mobile_delete_retains_history_statistics(
     assert deletion.value.status == 204
 
     mobile_page.goto(f"{live_server}/statistics")
-    statistics = mobile_page.locator("article", has_text="学习记录")
-    assert statistics.get_by_text(str(expected_total), exact=True).is_visible()
+    statistics = mobile_page.locator("article", has_text="今日已学")
+    assert statistics.get_by_text(str(expected_learned), exact=True).is_visible()
     assert (
         mobile_page.locator("article", has_text="连续学习天数")
         .get_by_text("1", exact=True)
+        .is_visible()
+    )
+    assert (
+        mobile_page.locator("article", has_text="总词条数")
+        .get_by_text(str(expected_entries - 1), exact=True)
         .is_visible()
     )
     assert _has_horizontal_overflow(mobile_page) is False
@@ -501,7 +512,7 @@ def test_mobile_delete_retains_history_statistics(
         with session_factory() as session:
             assert (
                 session.scalar(select(func.count()).select_from(LearningEvent))
-                == expected_total
+                == expected_event_total
             )
             event = next(
                 (

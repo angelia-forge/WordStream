@@ -227,17 +227,30 @@ def statistics_page(
     request: Request,
     config: ConfigDep,
     uow: UowDep,
+    vocabulary_id: Annotated[int | None, Query(gt=0)] = None,
 ) -> Response:
     redirect = _login_redirect(request, config)
     if redirect is not None:
         return redirect
-    summary = StatisticsService(uow, config).summary()
+    statistics_service = StatisticsService(uow, config)
+    summary = statistics_service.today(vocabulary_id=vocabulary_id)
+    reviews = statistics_service.reviews_today(vocabulary_id=vocabulary_id)
+    vocabularies = VocabularyService(uow).list_vocabularies(
+        page=1,
+        page_size=100,
+        query=None,
+        sort="name",
+        order="asc",
+    )
     return templates.TemplateResponse(
         request=request,
         name="statistics.html",
         context={
             "csrf_token": request.session.get("csrf_token", ""),
             "summary": summary,
+            "reviews": reviews,
+            "vocabularies": vocabularies.items,
+            "selected_vocabulary_id": vocabulary_id,
         },
     )
 

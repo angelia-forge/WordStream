@@ -108,9 +108,11 @@ def test_statistics_page_renders_retained_metrics(client: TestClient) -> None:
     response = client.get("/statistics")
 
     assert response.status_code == 200
+    assert "今日已学" in response.text
+    assert "今日待复习" in response.text
     assert "连续学习天数" in response.text
-    assert "累计学习天数" in response.text
-    assert "学习记录" in response.text
+    assert "总词条数" in response.text
+    assert "全部词库" in response.text
 
 
 def test_plan_page_and_configured_detail_are_rendered(

@@ -78,6 +78,28 @@ Returns `total_events`, `learned_days`, and `streak`. These values are computed
 from retained learning-event snapshots and do not change when a vocabulary is
 deleted.
 
+## `GET /api/v1/statistics/today`
+
+Returns `date`, the active `timezone`, optional `vocabulary_id`,
+`learned_terms`, `streak`, and `total_entries`. `learned_terms` counts distinct
+event `term_key` values on the stored event-local activity date. Historical
+metrics use event snapshots, while `total_entries` counts only existing
+entries.
+
+The optional positive `vocabulary_id` filters both historical and live
+metrics. A deleted vocabulary id is accepted so retained history remains
+queryable; its live entry count is zero.
+
+## `GET /api/v1/reviews/today`
+
+Returns `as_of`, optional `vocabulary_id`, and `due_reviews`. A review is due
+when an existing entry has `next_review_at <= as_of`. Deleted entries never
+contribute.
+
+Every newly accepted learning event captures the current database
+`AppSetting.timezone` and its derived local activity date in the outcome batch
+transaction. Changing the setting affects only later events.
+
 ## Error codes
 
 The common codes include `VALIDATION_ERROR`, `UNAUTHORIZED`, `CSRF_FAILED`,
