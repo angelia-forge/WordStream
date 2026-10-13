@@ -206,7 +206,7 @@ class ReviewState(Base):
     __table_args__ = (
         UniqueConstraint("entry_id", name="uq_review_states_entry_id"),
         CheckConstraint(
-            "box_number >= 1 AND box_number <= 5",
+            "box_number >= 0 AND box_number <= 4",
             name="box_number_range",
         ),
     )
@@ -216,7 +216,7 @@ class ReviewState(Base):
         ForeignKey("entries.id", ondelete="CASCADE"),
         nullable=False,
     )
-    box_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    box_number: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     next_review_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -224,12 +224,22 @@ class ReviewState(Base):
 class LearningEvent(Base):
     __tablename__ = "learning_events"
     __table_args__ = (
-        CheckConstraint("attempts > 0", name="attempts_positive"),
+        CheckConstraint("result IN ('seen', 'again')", name="result_allowed"),
+        CheckConstraint("attempt_count > 0", name="attempt_count_positive"),
+        CheckConstraint(
+            "client_attempt_count > 0",
+            name="client_attempt_count_positive",
+        ),
         Index("ix_learning_events_activity_date", "activity_date"),
         Index("ix_learning_events_entry_id", "entry_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_event_id: Mapped[str] = mapped_column(
+        String(36),
+        nullable=False,
+        unique=True,
+    )
     session_item_id: Mapped[str | None] = mapped_column(
         ForeignKey("session_items.id", ondelete="SET NULL"),
         unique=True,
@@ -239,18 +249,15 @@ class LearningEvent(Base):
     )
     term_key: Mapped[str] = mapped_column(String(500), nullable=False)
     term_snapshot: Mapped[str] = mapped_column(String(500), nullable=False)
-    vocabulary_id_snapshot: Mapped[int] = mapped_column(Integer, nullable=False)
-    vocabulary_name_snapshot: Mapped[str] = mapped_column(
-        String(200),
-        nullable=False,
-    )
-    result: Mapped[str] = mapped_column(String(32), nullable=False, default="seen")
-    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    vocabulary_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    result: Mapped[str] = mapped_column(String(16), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    client_attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
     )
-    received_at: Mapped[datetime] = mapped_column(
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         default=utc_now,

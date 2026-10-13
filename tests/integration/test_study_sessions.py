@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
+from threading import Barrier
 from typing import Any
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from app.models.learning import (
     LearningEvent,
@@ -13,6 +16,7 @@ from app.models.learning import (
     SessionAttempt,
     StudySession,
 )
+from app.repositories.study_sessions import StudySessionRepository
 
 
 def import_vocabulary(client: TestClient, *, count: int = 4) -> int:
@@ -56,15 +60,18 @@ def configure_plan(client: TestClient, vocabulary_id: int, **changes: Any) -> No
 
 def outcome(
     item_id: str,
-    action: str,
+    result: str,
     *,
-    attempt_id: str | None = None,
-) -> dict[str, str]:
+    client_event_id: str | None = None,
+    occurred_at: datetime | None = None,
+    attempt_count: int = 1,
+) -> dict[str, str | int]:
     return {
         "session_item_id": item_id,
-        "attempt_id": attempt_id or str(uuid4()),
-        "action": action,
-        "occurred_at": datetime.now(UTC).isoformat(),
+        "client_event_id": client_event_id or str(uuid4()),
+        "result": result,
+        "attempt_count": attempt_count,
+        "occurred_at": (occurred_at or datetime.now(UTC)).isoformat(),
     }
 
 
@@ -136,7 +143,7 @@ def test_create_returns_snapshots_resumes_and_can_replace_active(
         assert old_session.finished_at is not None
 
 
-def test_batch_reorders_retry_persists_progress_and_is_idempotent(
+def test_batch_persists_progress_and_is_idempotent(
     client: TestClient,
 ) -> None:
     vocabulary_id = import_vocabulary(client)
@@ -146,14 +153,13 @@ def test_batch_reorders_retry_persists_progress_and_is_idempotent(
         json={"vocabulary_id": vocabulary_id, "resume_existing": True},
     ).json()
     session_id = created["session"]["id"]
-    first, second, third, fourth = created["items"]
+    first, second, third = created["items"][:3]
     first_again = outcome(first["id"], "again")
     batch = {
         "outcomes": [
             first_again,
             outcome(second["id"], "seen"),
             outcome(third["id"], "seen"),
-            outcome(first["id"], "replayed"),
         ]
     }
 
@@ -163,18 +169,11 @@ def test_batch_reorders_retry_persists_progress_and_is_idempotent(
     )
     assert recorded.status_code == 200
     body = recorded.json()
-    assert body["accepted"] == 4
+    assert body["accepted"] == 3
     assert body["duplicates"] == 0
     assert body["session"]["current_index"] == 3
-    assert [item["id"] for item in body["items"]] == [
-        second["id"],
-        third["id"],
-        first["id"],
-        fourth["id"],
-    ]
-    retried = body["items"][2]
-    assert retried["result"] == "again"
-    assert retried["attempt_count"] == 2
+    assert body["items"][0]["result"] == "again"
+    assert body["items"][0]["attempt_count"] == 1
 
     duplicate = client.post(
         f"/api/v1/study-sessions/{session_id}/outcomes/batch",
@@ -182,7 +181,7 @@ def test_batch_reorders_retry_persists_progress_and_is_idempotent(
     )
     assert duplicate.status_code == 200
     assert duplicate.json()["accepted"] == 0
-    assert duplicate.json()["duplicates"] == 4
+    assert duplicate.json()["duplicates"] == 3
     assert duplicate.json()["session"]["current_index"] == 3
 
     fetched = client.get(f"/api/v1/study-sessions/{session_id}")
@@ -191,10 +190,13 @@ def test_batch_reorders_retry_persists_progress_and_is_idempotent(
 
     session_factory = client.app.state.session_factory
     with session_factory() as session:
-        assert session.scalar(select(func.count()).select_from(SessionAttempt)) == 4
+        assert session.scalar(select(func.count()).select_from(SessionAttempt)) == 3
+        assert session.scalar(select(func.count()).select_from(LearningEvent)) == 3
 
 
-def test_batch_is_atomic_and_rejects_reused_attempt_id(client: TestClient) -> None:
+def test_batch_is_atomic_and_rejects_reused_client_event_id(
+    client: TestClient,
+) -> None:
     vocabulary_id = import_vocabulary(client)
     configure_plan(client, vocabulary_id)
     created = client.post(
@@ -209,8 +211,8 @@ def test_batch_is_atomic_and_rejects_reused_attempt_id(client: TestClient) -> No
         f"/api/v1/study-sessions/{session_id}/outcomes/batch",
         json={
             "outcomes": [
-                outcome(first["id"], "seen", attempt_id=shared_id),
-                outcome(second["id"], "seen", attempt_id=shared_id),
+                outcome(first["id"], "seen", client_event_id=shared_id),
+                outcome(second["id"], "seen", client_event_id=shared_id),
             ]
         },
     )
@@ -220,6 +222,183 @@ def test_batch_is_atomic_and_rejects_reused_attempt_id(client: TestClient) -> No
     fetched = client.get(f"/api/v1/study-sessions/{session_id}").json()
     assert fetched["session"]["current_index"] == 0
     assert fetched["items"][0]["result"] is None
+
+
+def test_batch_rejects_out_of_window_timestamp(client: TestClient) -> None:
+    vocabulary_id = import_vocabulary(client, count=1)
+    configure_plan(client, vocabulary_id)
+    created = client.post(
+        "/api/v1/study-sessions",
+        json={"vocabulary_id": vocabulary_id},
+    ).json()
+
+    response = client.post(
+        f"/api/v1/study-sessions/{created['session']['id']}/outcomes/batch",
+        json={
+            "outcomes": [
+                outcome(
+                    created["items"][0]["id"],
+                    "seen",
+                    occurred_at=datetime.now(UTC) - timedelta(hours=25),
+                )
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_item_conflict_rolls_back_the_entire_batch(client: TestClient) -> None:
+    vocabulary_id = import_vocabulary(client, count=2)
+    configure_plan(client, vocabulary_id)
+    created = client.post(
+        "/api/v1/study-sessions",
+        json={"vocabulary_id": vocabulary_id},
+    ).json()
+    session_id = created["session"]["id"]
+    first, second = created["items"]
+    initial = client.post(
+        f"/api/v1/study-sessions/{session_id}/outcomes/batch",
+        json={"outcomes": [outcome(second["id"], "seen")]},
+    )
+    assert initial.status_code == 200
+
+    conflicted = client.post(
+        f"/api/v1/study-sessions/{session_id}/outcomes/batch",
+        json={
+            "outcomes": [
+                outcome(first["id"], "seen"),
+                outcome(second["id"], "again"),
+            ]
+        },
+    )
+    assert conflicted.status_code == 409
+    assert conflicted.json()["error"]["code"] == "OUTCOME_ALREADY_RECORDED"
+
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(LearningEvent)) == 1
+        refreshed = session.get(StudySession, session_id)
+        assert refreshed is not None
+        assert refreshed.current_index == 1
+        first_item = next(item for item in refreshed.items if item.id == first["id"])
+        assert first_item.result is None
+
+
+def test_client_event_id_conflict_does_not_change_original_event(
+    client: TestClient,
+) -> None:
+    vocabulary_id = import_vocabulary(client, count=1)
+    configure_plan(client, vocabulary_id)
+    created = client.post(
+        "/api/v1/study-sessions",
+        json={"vocabulary_id": vocabulary_id},
+    ).json()
+    item = created["items"][0]
+    client_event_id = str(uuid4())
+    occurred_at = datetime.now(UTC)
+    original = outcome(
+        item["id"],
+        "seen",
+        client_event_id=client_event_id,
+        occurred_at=occurred_at,
+    )
+    assert (
+        client.post(
+            f"/api/v1/study-sessions/{created['session']['id']}/outcomes/batch",
+            json={"outcomes": [original]},
+        ).status_code
+        == 200
+    )
+
+    changed = {**original, "result": "again"}
+    response = client.post(
+        f"/api/v1/study-sessions/{created['session']['id']}/outcomes/batch",
+        json={"outcomes": [changed]},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+
+
+def test_concurrent_outcomes_for_one_item_have_one_winner(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vocabulary_id = import_vocabulary(client, count=1)
+    configure_plan(client, vocabulary_id)
+    created = client.post(
+        "/api/v1/study-sessions",
+        json={"vocabulary_id": vocabulary_id},
+    ).json()
+    session_id = created["session"]["id"]
+    item_id = created["items"][0]["id"]
+    flush_barrier = Barrier(2)
+    original_flush = StudySessionRepository.flush
+
+    def synchronized_flush(repository: StudySessionRepository) -> None:
+        flush_barrier.wait(timeout=5)
+        original_flush(repository)
+
+    monkeypatch.setattr(StudySessionRepository, "flush", synchronized_flush)
+    payloads = [
+        {"outcomes": [outcome(item_id, "seen")]},
+        {"outcomes": [outcome(item_id, "again")]},
+    ]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(
+            executor.map(
+                lambda payload: client.post(
+                    f"/api/v1/study-sessions/{session_id}/outcomes/batch",
+                    json=payload,
+                ),
+                payloads,
+            )
+        )
+
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    conflict = next(response for response in responses if response.status_code == 409)
+    assert conflict.json()["error"]["code"] == "OUTCOME_ALREADY_RECORDED"
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(LearningEvent)) == 1
+
+
+def test_sqlite_write_lock_returns_database_busy(client: TestClient) -> None:
+    vocabulary_id = import_vocabulary(client, count=1)
+    configure_plan(client, vocabulary_id)
+    created = client.post(
+        "/api/v1/study-sessions",
+        json={"vocabulary_id": vocabulary_id},
+    ).json()
+    session_id = created["session"]["id"]
+    item_id = created["items"][0]["id"]
+    engine = client.app.state.engine
+
+    def set_short_timeout(
+        dbapi_connection: Any,
+        connection_record: Any,
+        connection_proxy: Any,
+    ) -> None:
+        del connection_record, connection_proxy
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA busy_timeout=1")
+        cursor.close()
+
+    with engine.connect() as locking_connection:
+        locking_connection.exec_driver_sql("BEGIN IMMEDIATE")
+        event.listen(engine, "checkout", set_short_timeout)
+        try:
+            response = client.post(
+                f"/api/v1/study-sessions/{session_id}/outcomes/batch",
+                json={"outcomes": [outcome(item_id, "seen")]},
+            )
+        finally:
+            event.remove(engine, "checkout", set_short_timeout)
+            locking_connection.rollback()
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "DATABASE_BUSY"
 
 
 def test_finish_is_idempotent_and_updates_history_and_review_state(
@@ -233,15 +412,15 @@ def test_finish_is_idempotent_and_updates_history_and_review_state(
     ).json()
     session_id = created["session"]["id"]
     first, second = created["items"]
+    batch = {
+        "outcomes": [
+            outcome(first["id"], "seen"),
+            outcome(second["id"], "again"),
+        ]
+    }
     recorded = client.post(
         f"/api/v1/study-sessions/{session_id}/outcomes/batch",
-        json={
-            "outcomes": [
-                outcome(first["id"], "seen"),
-                outcome(second["id"], "again"),
-                outcome(second["id"], "replayed"),
-            ]
-        },
+        json=batch,
     )
     assert recorded.status_code == 200
 
@@ -251,7 +430,13 @@ def test_finish_is_idempotent_and_updates_history_and_review_state(
     assert repeated.status_code == 200
     assert finished.json() == repeated.json()
     assert finished.json()["completed_items"] == 2
-    assert finished.json()["total_attempts"] == 3
+    assert finished.json()["total_attempts"] == 2
+    duplicate = client.post(
+        f"/api/v1/study-sessions/{session_id}/outcomes/batch",
+        json=batch,
+    )
+    assert duplicate.status_code == 200
+    assert duplicate.json()["duplicates"] == 2
 
     session_factory = client.app.state.session_factory
     with session_factory() as session:
@@ -260,4 +445,4 @@ def test_finish_is_idempotent_and_updates_history_and_review_state(
     assert len(events) == 2
     assert {event.result for event in events} == {"seen", "again"}
     assert len(review_states) == 2
-    assert sorted(state.box_number for state in review_states) == [1, 2]
+    assert sorted(state.box_number for state in review_states) == [0, 0]

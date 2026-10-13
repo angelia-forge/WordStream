@@ -46,8 +46,9 @@ session contracts.
 `PLAN_REQUIRED`; an empty queue returns `EMPTY_STUDY_QUEUE`.
 
 `GET /api/v1/study-sessions/{session_id}` returns the persisted queue and
-authoritative `current_index`. `current_index` is the completion frontier, not
-the player's display cursor. Looking at a previous item never moves it back.
+authoritative `current_index`. `current_index` is the number of finalized
+items, not the player's display cursor. The player resumes at the first
+unfinished item. Looking at a previous item never changes server progress.
 
 Settled outcomes use:
 
@@ -55,31 +56,39 @@ Settled outcomes use:
 POST /api/v1/study-sessions/{session_id}/outcomes/batch
 ```
 
-Each outcome contains `session_item_id`, a client-generated UUID `attempt_id`,
-`action=seen|again|replayed`, and timezone-aware `occurred_at`.
+Each outcome contains `session_item_id`, a client-generated UUID
+`client_event_id`, `result=seen|again`, client-observed `attempt_count`, and
+timezone-aware `occurred_at`.
 
-- A retry reuses the same `SessionItem`; it never creates a duplicate row.
-- The retried item is inserted after up to two other items, so it becomes the
-  third subsequent presentation when enough items remain, otherwise the tail.
-- Every accepted presentation increments server-side `attempt_count`.
-- The first `seen` or `again` locks the final result. A later `replayed`
-  presentation cannot overwrite it.
-- Multiple attempts still produce one final `LearningEvent`, keyed uniquely by
-  `session_item_id`.
+- The first `seen` or `again` locks the final result and immediately creates
+  one `LearningEvent`, keyed uniquely by `session_item_id`.
+- `again` resets an existing review state to box 0. A first outcome also starts
+  at box 0. `seen` advances an existing state by one box, capped at box 4.
+- Box intervals are 1, 3, 7, 14, and 30 days. Review timestamps are calculated
+  from accepted `occurred_at`.
+- The player may show an `again` item after up to two other items, but that
+  replay is presentation-only and cannot create or overwrite an outcome.
+- The server increments authoritative `attempt_count`; the submitted value is
+  retained separately as `client_attempt_count` for audit.
 - `occurred_at` outside server UTC time plus or minus 24 hours is rejected with
   `VALIDATION_ERROR`.
-- The server deduplicates `attempt_id` values per item and derives the
-  authoritative attempt count.
+- Reusing `client_event_id` with identical content returns the original result.
+  Reusing it with changed content returns `IDEMPOTENCY_CONFLICT`. A second id
+  for the same session item returns `OUTCOME_ALREADY_RECORDED`.
 - A batch is atomic. Mixed new and conflicting entries reject the whole batch.
+- Concurrent uniqueness races have the same idempotency/conflict behavior.
+  SQLite write lock exhaustion returns `503 DATABASE_BUSY`.
 
-The player keeps outcomes in memory and flushes after ten newly settled
-results, on pause, page hiding, and before finishing. It uses an absolute
-deadline for timing. Returning from a throttled background page advances at
-most one item.
+The player writes pending outcomes to a session-scoped `localStorage` outbox
+before transmission and removes them only after acknowledgement. It flushes
+after ten newly settled results, on pause, page hiding, before finishing, and
+when connectivity returns. Network, 5xx, and `DATABASE_BUSY` failures use up
+to three exponential-backoff attempts. It uses an absolute deadline for
+timing. Returning from a throttled background page advances at most one item.
 
-`POST /api/v1/study-sessions/{session_id}/finish` is idempotent. It writes one
-history event and updates one review state for every item with a final result,
-then marks the session finished. Unsettled items do not create history.
+`POST /api/v1/study-sessions/{session_id}/finish` is idempotent and only marks
+the session finished. Outcomes already wrote history and review state in their
+batch transaction; unsettled items do not create history.
 
 ## Speech and player fallback
 

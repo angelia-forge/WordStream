@@ -13,7 +13,7 @@ def test_health_reports_database_and_migration(client: TestClient) -> None:
         "version": "0.1.0",
         "database": "ok",
         "migration": "current",
-        "revision": "20261013_0006",
+        "revision": "20261013_0007",
     }
     UUID(response.headers["X-Request-ID"])
 

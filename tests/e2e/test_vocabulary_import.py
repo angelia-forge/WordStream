@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -19,7 +20,12 @@ from sqlalchemy import func, select
 
 from app.config import AuthMode, Environment, Settings
 from app.db import create_database_engine, create_session_factory
-from app.models.learning import LearningEvent, ReviewState, StudyPlan
+from app.models.learning import (
+    LearningEvent,
+    ReviewState,
+    SessionItem,
+    StudyPlan,
+)
 from app.models.vocabulary import Entry, Vocabulary
 
 
@@ -188,6 +194,7 @@ def test_mobile_configures_and_saves_study_plan(
 def test_mobile_study_player_full_flow(
     mobile_page: Page,
     live_server: str,
+    e2e_database_url: str,
 ) -> None:
     mobile_page.add_init_script(_speech_mock("ready"))
     mobile_page.goto(f"{live_server}/vocabularies/import")
@@ -214,6 +221,7 @@ def test_mobile_study_player_full_flow(
     mobile_page.wait_for_url("**?plan_saved=1")
     mobile_page.get_by_role("button", name="开始陪读").click()
     mobile_page.wait_for_url("**/study/*")
+    session_id = int(mobile_page.url.rsplit("/", maxsplit=1)[-1])
 
     term = mobile_page.locator("[data-study-term]")
     assert term.text_content() == "alpha"
@@ -245,6 +253,74 @@ def test_mobile_study_player_full_flow(
     assert mobile_page.get_by_text("本次陪读已结束").is_visible()
     assert _has_horizontal_overflow(mobile_page) is False
     assert _small_visible_controls(mobile_page) == []
+
+    engine = create_database_engine(
+        Settings(
+            environment=Environment.TEST,
+            auth_mode=AuthMode.DISABLED,
+            database_url=e2e_database_url,
+        )
+    )
+    try:
+        with create_session_factory(engine)() as session:
+            item_ids = select(SessionItem.id).where(
+                SessionItem.session_id == session_id
+            )
+            assert (
+                session.scalar(
+                    select(func.count())
+                    .select_from(LearningEvent)
+                    .where(LearningEvent.session_item_id.in_(item_ids))
+                )
+                == 5
+            )
+            assert session.scalar(select(func.count()).select_from(ReviewState)) >= 5
+    finally:
+        engine.dispose()
+
+
+def test_offline_outbox_retries_when_network_returns(
+    browser: Browser,
+    live_server: str,
+    e2e_database_url: str,
+) -> None:
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    try:
+        page.add_init_script(_speech_mock("ready"))
+        session_id = _seed_player_session(
+            page,
+            live_server,
+            e2e_database_url,
+            name="Offline outbox",
+            interval_seconds=10,
+            count=2,
+        )
+        endpoint = f"**/api/v1/study-sessions/{session_id}/outcomes/batch"
+        page.route(endpoint, lambda route: route.abort())
+        page.goto(f"{live_server}/study/{session_id}")
+        page.get_by_role("button", name="下一个").click()
+        page.get_by_role("button", name="暂停").click()
+        page.get_by_text("学习进度同步失败").wait_for(timeout=5_000)
+        assert (
+            page.evaluate(
+                "(id) => JSON.parse(localStorage.getItem("
+                "`wordstream.study.outbox.${id}`)).length",
+                session_id,
+            )
+            == 1
+        )
+
+        page.unroute(endpoint)
+        page.evaluate("window.dispatchEvent(new Event('online'))")
+        page.wait_for_function(
+            "(id) => localStorage.getItem(" "`wordstream.study.outbox.${id}`) === null",
+            arg=session_id,
+        )
+        state = page.request.get(f"{live_server}/api/v1/study-sessions/{session_id}")
+        assert state.ok
+        assert state.json()["items"][0]["result"] == "seen"
+    finally:
+        page.close()
 
 
 def test_speech_failures_do_not_stop_automatic_progress(
@@ -364,13 +440,17 @@ def test_mobile_delete_retains_history_statistics(
             session.add(ReviewState(entry_id=entry.id))
             session.add(
                 LearningEvent(
+                    client_event_id=str(uuid4()),
                     entry_id=entry.id,
                     term_key=entry.normalized_term,
                     term_snapshot=entry.term,
-                    vocabulary_id_snapshot=vocabulary_id,
-                    vocabulary_name_snapshot="Retained history",
-                    result="remembered",
-                    attempts=1,
+                    vocabulary_snapshot={
+                        "id": vocabulary_id,
+                        "name": "Retained history",
+                    },
+                    result="seen",
+                    attempt_count=1,
+                    client_attempt_count=1,
                     occurred_at=datetime.now(UTC),
                     timezone=config.app_timezone,
                     activity_date=local_today,
@@ -423,10 +503,13 @@ def test_mobile_delete_retains_history_statistics(
                 session.scalar(select(func.count()).select_from(LearningEvent))
                 == expected_total
             )
-            event = session.scalar(
-                select(LearningEvent).where(
-                    LearningEvent.vocabulary_name_snapshot == "Retained history"
-                )
+            event = next(
+                (
+                    candidate
+                    for candidate in session.scalars(select(LearningEvent))
+                    if candidate.vocabulary_snapshot["name"] == "Retained history"
+                ),
+                None,
             )
             assert event is not None
             assert event.entry_id is None

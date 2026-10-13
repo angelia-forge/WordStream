@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 SessionStatus = Literal["active", "finished", "abandoned"]
 SessionSource = Literal["review", "new"]
 SessionResult = Literal["seen", "again"]
-AttemptAction = Literal["seen", "again", "replayed"]
 
 
 class StudySessionCreate(BaseModel):
@@ -63,8 +62,9 @@ class StudySessionRead(BaseModel):
 
 class OutcomeWrite(BaseModel):
     session_item_id: str
-    attempt_id: UUID
-    action: AttemptAction
+    client_event_id: UUID
+    result: SessionResult
+    attempt_count: int = Field(ge=1)
     occurred_at: datetime
 
     @field_validator("occurred_at")

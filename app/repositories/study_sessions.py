@@ -32,6 +32,28 @@ class StudySessionRepository:
     def add_learning_event(self, event: LearningEvent) -> None:
         self._session.add(event)
 
+    def get_learning_events_by_client_ids(
+        self,
+        client_event_ids: Sequence[str],
+    ) -> Sequence[LearningEvent]:
+        if not client_event_ids:
+            return []
+        statement = select(LearningEvent).where(
+            LearningEvent.client_event_id.in_(client_event_ids)
+        )
+        return list(self._session.scalars(statement))
+
+    def get_learning_events_by_item_ids(
+        self,
+        session_item_ids: Sequence[str],
+    ) -> Sequence[LearningEvent]:
+        if not session_item_ids:
+            return []
+        statement = select(LearningEvent).where(
+            LearningEvent.session_item_id.in_(session_item_ids)
+        )
+        return list(self._session.scalars(statement))
+
     def get(self, session_id: int) -> StudySession | None:
         statement = (
             select(StudySession)
@@ -53,15 +75,10 @@ class StudySessionRepository:
         )
         return self._session.scalar(statement)
 
-    def get_attempts(self, attempt_ids: Sequence[str]) -> Sequence[SessionAttempt]:
-        if not attempt_ids:
-            return []
-        statement = select(SessionAttempt).where(SessionAttempt.id.in_(attempt_ids))
-        return list(self._session.scalars(statement))
-
     def get_review_state(self, entry_id: int) -> ReviewState | None:
         statement = select(ReviewState).where(ReviewState.entry_id == entry_id)
-        return self._session.scalar(statement)
+        with self._session.no_autoflush:
+            return self._session.scalar(statement)
 
     def add_review_state(self, state: ReviewState) -> None:
         self._session.add(state)

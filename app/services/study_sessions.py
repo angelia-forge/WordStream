@@ -5,6 +5,8 @@ from datetime import UTC, datetime, timedelta
 from typing import TypeVar
 from zoneinfo import ZoneInfo
 
+from sqlalchemy.exc import IntegrityError, OperationalError
+
 from app.config import Settings
 from app.exceptions import AppError
 from app.models.learning import (
@@ -138,7 +140,7 @@ class StudySessionService:
         batch: OutcomeBatch,
     ) -> OutcomeBatchResult:
         with self._uow:
-            study_session = self._require_active_session(session_id)
+            study_session = self._require_session(session_id)
             now = utc_now()
             self._validate_batch_times(batch, now)
 
@@ -151,34 +153,113 @@ class StudySessionService:
                         status_code=404,
                     )
 
-            attempt_ids = [str(outcome.attempt_id) for outcome in batch.outcomes]
-            persisted = {
-                attempt.id: attempt
-                for attempt in self._uow.study_sessions.get_attempts(attempt_ids)
+            unique_outcomes = self._deduplicate_batch(batch.outcomes)
+            client_event_ids = [
+                str(outcome.client_event_id) for outcome in unique_outcomes
+            ]
+            item_ids = [outcome.session_item_id for outcome in unique_outcomes]
+            events_by_client_id = {
+                event.client_event_id: event
+                for event in self._uow.study_sessions.get_learning_events_by_client_ids(
+                    client_event_ids
+                )
             }
-            self._validate_idempotency(batch.outcomes, persisted)
+            events_by_item_id = {
+                event.session_item_id: event
+                for event in self._uow.study_sessions.get_learning_events_by_item_ids(
+                    item_ids
+                )
+            }
+            self._validate_persisted_outcomes(
+                unique_outcomes,
+                events_by_client_id,
+                events_by_item_id,
+            )
+            new_outcomes = [
+                outcome
+                for outcome in unique_outcomes
+                if str(outcome.client_event_id) not in events_by_client_id
+            ]
+            if new_outcomes and study_session.status != "active":
+                raise AppError(
+                    "SESSION_NOT_ACTIVE",
+                    "Study session is not active",
+                    status_code=409,
+                )
 
             accepted = 0
-            duplicates = 0
-            processed: set[str] = set()
-            for outcome in batch.outcomes:
-                attempt_id = str(outcome.attempt_id)
-                if attempt_id in persisted or attempt_id in processed:
+            duplicates = len(batch.outcomes) - len(unique_outcomes)
+            for outcome in unique_outcomes:
+                client_event_id = str(outcome.client_event_id)
+                if client_event_id in events_by_client_id:
                     duplicates += 1
                     continue
-                self._apply_outcome(study_session, outcome)
+
+                item = items_by_id[outcome.session_item_id]
+                item.attempt_count += 1
+                item.result = outcome.result
                 self._uow.study_sessions.add_attempt(
                     SessionAttempt(
-                        id=attempt_id,
+                        id=client_event_id,
                         session_item_id=outcome.session_item_id,
-                        action=outcome.action,
+                        action=outcome.result,
                         occurred_at=outcome.occurred_at,
                     )
                 )
-                processed.add(attempt_id)
+                self._write_learning_result(study_session, item, outcome)
                 accepted += 1
 
-            self._uow.commit()
+            study_session.current_index = sum(
+                item.result is not None for item in study_session.items
+            )
+            try:
+                self._uow.study_sessions.flush()
+                self._uow.commit()
+            except IntegrityError as exc:
+                self._uow.rollback()
+                race_events = {
+                    event.client_event_id: event
+                    for event in (
+                        self._uow.study_sessions.get_learning_events_by_client_ids(
+                            client_event_ids
+                        )
+                    )
+                }
+                race_item_events = {
+                    event.session_item_id: event
+                    for event in (
+                        self._uow.study_sessions.get_learning_events_by_item_ids(
+                            item_ids
+                        )
+                    )
+                }
+                self._validate_persisted_outcomes(
+                    unique_outcomes,
+                    race_events,
+                    race_item_events,
+                )
+                if len(race_events) == len(unique_outcomes):
+                    state = self._serialize(self._require_session(session_id))
+                    return OutcomeBatchResult(
+                        **state.model_dump(),
+                        accepted=0,
+                        duplicates=len(batch.outcomes),
+                    )
+                raise AppError(
+                    "OUTCOME_ALREADY_RECORDED",
+                    "The final result for a session item is already recorded",
+                    status_code=409,
+                ) from exc
+            except OperationalError as exc:
+                self._uow.rollback()
+                if "locked" in str(exc).lower():
+                    raise AppError(
+                        "DATABASE_BUSY",
+                        "The database is busy; retry the batch",
+                        status_code=503,
+                    ) from exc
+                raise
+
             state = self._serialize(study_session)
             return OutcomeBatchResult(
                 **state.model_dump(),
@@ -197,114 +278,54 @@ class StudySessionService:
                 )
             if study_session.status == "active":
                 finished_at = utc_now()
-                for item in study_session.items:
-                    if item.result is not None:
-                        self._write_learning_result(
-                            study_session,
-                            item,
-                            finished_at,
-                        )
                 study_session.status = "finished"
                 study_session.finished_at = finished_at
                 self._uow.commit()
             return self._summary(study_session)
 
-    def _apply_outcome(
-        self,
-        study_session: StudySession,
-        outcome: OutcomeWrite,
-    ) -> None:
-        items = sorted(study_session.items, key=lambda item: item.position)
-        if study_session.current_index >= len(items):
-            raise AppError(
-                "SESSION_COMPLETE",
-                "All session items have already been processed",
-                status_code=409,
-            )
-        current = items[study_session.current_index]
-        if current.id != outcome.session_item_id:
-            raise AppError(
-                "OUTCOME_OUT_OF_ORDER",
-                "Outcome does not match the current session item",
-                status_code=409,
-                details={"expected_session_item_id": current.id},
-            )
-
-        if outcome.action == "seen":
-            if current.result is not None:
-                raise AppError(
-                    "OUTCOME_ALREADY_RECORDED",
-                    "The final result for this item is already recorded",
-                    status_code=409,
-                )
-            current.result = "seen"
-            study_session.current_index += 1
-        elif outcome.action == "again":
-            if current.result == "seen":
-                raise AppError(
-                    "OUTCOME_ALREADY_RECORDED",
-                    "The final result for this item is already recorded",
-                    status_code=409,
-                )
-            if current.result is None:
-                current.result = "again"
-            move_current_for_retry(items, study_session.current_index)
-            for position, item in enumerate(items):
-                item.position = position
-            study_session.items = items
-        else:
-            if current.result != "again":
-                raise AppError(
-                    "INVALID_REPLAY",
-                    "Only an item marked again can be replayed",
-                    status_code=409,
-                )
-            study_session.current_index += 1
-        current.attempt_count += 1
-
     def _write_learning_result(
         self,
         study_session: StudySession,
         item: SessionItem,
-        finished_at: datetime,
+        outcome: OutcomeWrite,
     ) -> None:
-        occurred_at = max(
-            (_as_utc(attempt.occurred_at) for attempt in item.attempts),
-            default=finished_at,
-        )
+        occurred_at = outcome.occurred_at
         local_date = occurred_at.astimezone(
             ZoneInfo(self._settings.app_timezone)
         ).date()
         snapshot = item.entry_snapshot
         self._uow.study_sessions.add_learning_event(
             LearningEvent(
+                client_event_id=str(outcome.client_event_id),
                 session_item_id=item.id,
                 entry_id=item.entry_id,
                 term_key=str(snapshot["normalized_term"]),
                 term_snapshot=str(snapshot["term"]),
-                vocabulary_id_snapshot=study_session.vocabulary_id,
-                vocabulary_name_snapshot=str(
-                    study_session.plan_snapshot["vocabulary_name"]
-                ),
-                result=item.result,
-                attempts=item.attempt_count,
+                vocabulary_snapshot={
+                    "id": study_session.vocabulary_id,
+                    "name": str(study_session.plan_snapshot["vocabulary_name"]),
+                },
+                result=outcome.result,
+                attempt_count=item.attempt_count,
+                client_attempt_count=outcome.attempt_count,
                 occurred_at=occurred_at,
                 timezone=self._settings.app_timezone,
                 activity_date=local_date,
             )
         )
         state = self._uow.study_sessions.get_review_state(item.entry_id)
-        if state is None:
-            state = ReviewState(entry_id=item.entry_id, box_number=1)
-            self._uow.study_sessions.add_review_state(state)
-        if item.result == "again":
-            state.box_number = 1
-        else:
-            state.box_number = min(state.box_number + 1, 5)
-        state.last_reviewed_at = occurred_at
-        state.next_review_at = occurred_at + timedelta(
-            days=REVIEW_INTERVAL_DAYS[state.box_number - 1]
+        existing_box = state.box_number if state is not None else None
+        box_number, next_review_at = calculate_review_state(
+            existing_box,
+            outcome.result,
+            occurred_at,
         )
+        if state is None:
+            state = ReviewState(entry_id=item.entry_id)
+            self._uow.study_sessions.add_review_state(state)
+        state.box_number = box_number
+        state.last_reviewed_at = occurred_at
+        state.next_review_at = next_review_at
 
     @staticmethod
     def _validate_batch_times(batch: OutcomeBatch, now: datetime) -> None:
@@ -318,36 +339,58 @@ class StudySessionService:
             )
 
     @staticmethod
-    def _validate_idempotency(
+    def _deduplicate_batch(
         outcomes: list[OutcomeWrite],
-        persisted: dict[str, SessionAttempt],
-    ) -> None:
-        payloads: dict[str, tuple[str, str, datetime]] = {}
+    ) -> list[OutcomeWrite]:
+        by_client_id: dict[str, OutcomeWrite] = {}
+        by_item_id: dict[str, OutcomeWrite] = {}
         for outcome in outcomes:
-            attempt_id = str(outcome.attempt_id)
-            payload = (
-                outcome.session_item_id,
-                outcome.action,
-                outcome.occurred_at,
-            )
-            previous = payloads.get(attempt_id)
-            if previous is not None and previous != payload:
+            client_event_id = str(outcome.client_event_id)
+            previous = by_client_id.get(client_event_id)
+            if previous is not None and previous != outcome:
                 raise AppError(
                     "IDEMPOTENCY_CONFLICT",
-                    "attempt_id was reused with different content",
+                    "client_event_id was reused with different content",
                     status_code=409,
+                    details={"client_event_id": client_event_id},
                 )
-            payloads[attempt_id] = payload
-            existing = persisted.get(attempt_id)
-            if existing is not None and (
-                existing.session_item_id != outcome.session_item_id
-                or existing.action != outcome.action
-                or _as_utc(existing.occurred_at) != outcome.occurred_at
+            item_outcome = by_item_id.get(outcome.session_item_id)
+            if item_outcome is not None and item_outcome.client_event_id != (
+                outcome.client_event_id
             ):
                 raise AppError(
-                    "IDEMPOTENCY_CONFLICT",
-                    "attempt_id was reused with different content",
+                    "OUTCOME_ALREADY_RECORDED",
+                    "The batch contains multiple outcomes for one session item",
                     status_code=409,
+                    details={"session_item_id": outcome.session_item_id},
+                )
+            by_client_id[client_event_id] = outcome
+            by_item_id[outcome.session_item_id] = outcome
+        return list(by_client_id.values())
+
+    @staticmethod
+    def _validate_persisted_outcomes(
+        outcomes: list[OutcomeWrite],
+        events_by_client_id: dict[str, LearningEvent],
+        events_by_item_id: dict[str | None, LearningEvent],
+    ) -> None:
+        for outcome in outcomes:
+            client_event_id = str(outcome.client_event_id)
+            existing = events_by_client_id.get(client_event_id)
+            if existing is not None and not _event_matches(existing, outcome):
+                raise AppError(
+                    "IDEMPOTENCY_CONFLICT",
+                    "client_event_id was reused with different content",
+                    status_code=409,
+                    details={"client_event_id": client_event_id},
+                )
+            item_event = events_by_item_id.get(outcome.session_item_id)
+            if item_event is not None and item_event.client_event_id != client_event_id:
+                raise AppError(
+                    "OUTCOME_ALREADY_RECORDED",
+                    "The final result for this item is already recorded",
+                    status_code=409,
+                    details={"session_item_id": outcome.session_item_id},
                 )
 
     @staticmethod
@@ -422,6 +465,30 @@ def remaining_milliseconds(
     now_ms: float,
 ) -> float:
     return max(0.0, deadline_ms - now_ms)
+
+
+def calculate_review_state(
+    current_box: int | None,
+    result: str,
+    occurred_at: datetime,
+) -> tuple[int, datetime]:
+    if current_box is None or result == "again":
+        box_number = 0
+    else:
+        box_number = min(current_box + 1, len(REVIEW_INTERVAL_DAYS) - 1)
+    return (
+        box_number,
+        occurred_at + timedelta(days=REVIEW_INTERVAL_DAYS[box_number]),
+    )
+
+
+def _event_matches(event: LearningEvent, outcome: OutcomeWrite) -> bool:
+    return (
+        event.session_item_id == outcome.session_item_id
+        and event.result == outcome.result
+        and event.client_attempt_count == outcome.attempt_count
+        and _as_utc(event.occurred_at) == outcome.occurred_at
+    )
 
 
 def _as_utc(value: datetime) -> datetime:

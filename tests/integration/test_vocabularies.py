@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
@@ -174,13 +175,17 @@ def test_delete_cascades_state_but_retains_history_and_statistics(
             activity_date = local_today - timedelta(days=offset)
             session.add(
                 LearningEvent(
+                    client_event_id=str(uuid4()),
                     entry_id=entry.id,
                     term_key=entry.normalized_term,
                     term_snapshot=entry.term,
-                    vocabulary_id_snapshot=vocabulary_id,
-                    vocabulary_name_snapshot="History",
-                    result="remembered",
-                    attempts=1,
+                    vocabulary_snapshot={
+                        "id": vocabulary_id,
+                        "name": "History",
+                    },
+                    result="seen",
+                    attempt_count=1,
+                    client_attempt_count=1,
                     occurred_at=datetime.now(UTC),
                     timezone="Asia/Shanghai",
                     activity_date=activity_date,
@@ -210,7 +215,7 @@ def test_delete_cascades_state_but_retains_history_and_statistics(
         assert len(events) == 2
         assert all(event.entry_id is None for event in events)
         assert {event.term_snapshot for event in events} == {"focus"}
-        assert {event.vocabulary_name_snapshot for event in events} == {"History"}
+        assert {event.vocabulary_snapshot["name"] for event in events} == {"History"}
 
     after = client.get("/api/v1/statistics")
     assert after.status_code == 200

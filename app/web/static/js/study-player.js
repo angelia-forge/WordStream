@@ -133,7 +133,10 @@
       this.root = root;
       this.session = initialState.session;
       this.items = initialState.items;
-      this.currentIndex = this.session.current_index;
+      this.currentIndex = this.items.findIndex((item) => item.result === null);
+      if (this.currentIndex < 0) {
+        this.currentIndex = this.items.length;
+      }
       this.displayIndex = Math.min(this.currentIndex, this.items.length - 1);
       if (
         this.currentIndex >= this.items.length &&
@@ -146,13 +149,14 @@
       this.deadline = null;
       this.timerId = null;
       this.paused = this.session.status !== "active";
-      this.pending = [];
+      this.sessionId = Number(root.dataset.sessionId);
+      this.outboxKey = `wordstream.study.outbox.${this.sessionId}`;
+      this.pending = this.loadOutbox();
       this.settledSinceFlush = 0;
       this.flushPromise = null;
       this.transitioning = false;
       this.finished = this.session.status === "finished";
       this.csrfToken = root.dataset.csrfToken || "";
-      this.sessionId = Number(root.dataset.sessionId);
       this.vocabularyId = Number(root.dataset.vocabularyId);
       this.elements = this.collectElements();
       this.speech = new SpeechReader(
@@ -184,7 +188,7 @@
       };
     }
 
-    start() {
+    async start() {
       this.elements.previous.addEventListener("click", () => this.previous());
       this.elements.next.addEventListener("click", () => this.advance());
       this.elements.again.addEventListener("click", () => this.markAgain());
@@ -193,12 +197,28 @@
       document.addEventListener("visibilitychange", () =>
         this.handleVisibilityChange(),
       );
+      window.addEventListener("online", () => {
+        this.flushOutcomes().catch(() => {});
+      });
       window.addEventListener("pagehide", () => {
         this.clearTimer();
-        this.flushOutcomes(true);
+        this.flushOutcomes(true).catch(() => {});
       });
 
       this.render();
+      if (this.pending.length) {
+        this.paused = true;
+        this.renderPauseButton();
+        try {
+          await this.flushOutcomes();
+          await this.refreshSession();
+          this.paused = this.session.status !== "active";
+          this.finished = this.session.status === "finished";
+          this.render();
+        } catch (_error) {
+          return;
+        }
+      }
       if (!this.paused && this.currentIndex < this.items.length) {
         this.speech.speak(this.currentItem().entry.term);
         this.resetTimer();
@@ -297,10 +317,9 @@
       this.transitioning = true;
       try {
         const item = this.items[this.currentIndex];
-        const action = item.result === "again" ? "replayed" : "seen";
         const newlySettled = item.result === null;
-        this.enqueue(item, action);
         if (newlySettled) {
+          this.enqueue(item, "seen");
           item.result = "seen";
           this.settledSinceFlush += 1;
         }
@@ -308,7 +327,7 @@
         this.currentIndex += 1;
         this.displayIndex = Math.min(this.currentIndex, this.items.length - 1);
         if (this.settledSinceFlush >= 10) {
-          this.flushOutcomes();
+          this.flushOutcomes().catch(() => {});
         }
         if (this.currentIndex >= this.items.length) {
           this.handleQueueEnd();
@@ -340,18 +359,54 @@
       moveRetryItem(this.items, this.currentIndex);
       this.displayIndex = this.currentIndex;
       if (this.settledSinceFlush >= 10) {
-        this.flushOutcomes();
+        this.flushOutcomes().catch(() => {});
       }
       this.switchDisplayedItem();
     }
 
-    enqueue(item, action) {
+    enqueue(item, result) {
       this.pending.push({
         session_item_id: item.id,
-        attempt_id: crypto.randomUUID(),
-        action,
+        client_event_id: crypto.randomUUID(),
+        result,
+        attempt_count: item.attempt_count + 1,
         occurred_at: new Date().toISOString(),
       });
+      this.saveOutbox();
+    }
+
+    loadOutbox() {
+      try {
+        const value = JSON.parse(window.localStorage.getItem(this.outboxKey));
+        return Array.isArray(value)
+          ? value.filter(
+              (outcome) =>
+                outcome &&
+                typeof outcome.session_item_id === "string" &&
+                typeof outcome.client_event_id === "string" &&
+                (outcome.result === "seen" || outcome.result === "again") &&
+                Number.isInteger(outcome.attempt_count) &&
+                typeof outcome.occurred_at === "string",
+            )
+          : [];
+      } catch (_error) {
+        return [];
+      }
+    }
+
+    saveOutbox() {
+      try {
+        if (this.pending.length) {
+          window.localStorage.setItem(
+            this.outboxKey,
+            JSON.stringify(this.pending),
+          );
+        } else {
+          window.localStorage.removeItem(this.outboxKey);
+        }
+      } catch (_error) {
+        this.showError("无法在本机保存待同步进度");
+      }
     }
 
     async togglePause() {
@@ -464,38 +519,114 @@
     }
 
     async performFlush(keepalive) {
-      const outcomes = this.pending.splice(0);
+      const outcomes = this.pending.slice();
       try {
-        const response = await fetch(
-          `/api/v1/study-sessions/${this.sessionId}/outcomes/batch`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(this.csrfToken
-                ? { "X-CSRF-Token": this.csrfToken }
-                : {}),
-            },
-            body: JSON.stringify({ outcomes }),
-            keepalive,
-          },
+        await this.sendBatchWithRetry(outcomes, keepalive);
+        const confirmedIds = new Set(
+          outcomes.map((outcome) => outcome.client_event_id),
         );
-        const payload = await response.json();
-        if (!response.ok) {
-          throw new Error(payload.error?.message || "学习进度同步失败");
-        }
+        this.pending = this.pending.filter(
+          (outcome) => !confirmedIds.has(outcome.client_event_id),
+        );
+        this.saveOutbox();
         this.settledSinceFlush = 0;
       } catch (error) {
-        this.pending.unshift(...outcomes);
         this.paused = true;
         this.clearTimer();
         this.speech.pause();
         this.renderPauseButton();
         this.showError(
-          error instanceof Error ? error.message : "学习进度同步失败",
+          error instanceof TypeError
+            ? "学习进度同步失败"
+            : error instanceof Error
+              ? error.message
+              : "学习进度同步失败",
         );
         throw error;
       }
+    }
+
+    async sendBatchWithRetry(outcomes, keepalive) {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const response = await fetch(
+            `/api/v1/study-sessions/${this.sessionId}/outcomes/batch`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(this.csrfToken
+                  ? { "X-CSRF-Token": this.csrfToken }
+                  : {}),
+              },
+              body: JSON.stringify({ outcomes }),
+              keepalive,
+            },
+          );
+          const payload = await response.json().catch(() => ({}));
+          if (response.ok) {
+            return payload;
+          }
+          const code = payload.error?.code;
+          if (
+            code === "OUTCOME_ALREADY_RECORDED" ||
+            code === "IDEMPOTENCY_CONFLICT"
+          ) {
+            this.discardConflict(outcomes, payload.error?.details);
+            await this.refreshSession();
+            throw new Error(payload.error?.message || "学习进度存在冲突");
+          }
+          if (response.status < 500 && code !== "DATABASE_BUSY") {
+            throw new Error(payload.error?.message || "学习进度同步失败");
+          }
+          throw new TypeError(payload.error?.message || "学习进度同步失败");
+        } catch (error) {
+          if (attempt === 2 || !this.isRetryableError(error)) {
+            throw error;
+          }
+        }
+        await new Promise((resolve) =>
+          window.setTimeout(resolve, 250 * 2 ** attempt),
+        );
+      }
+    }
+
+    isRetryableError(error) {
+      return error instanceof TypeError;
+    }
+
+    discardConflict(outcomes, details) {
+      const conflicted = outcomes.filter(
+        (outcome) =>
+          !details ||
+          outcome.session_item_id === details.session_item_id ||
+          outcome.client_event_id === details.client_event_id,
+      );
+      const discardedIds = new Set(
+        conflicted.map((outcome) => outcome.client_event_id),
+      );
+      this.pending = this.pending.filter(
+        (outcome) => !discardedIds.has(outcome.client_event_id),
+      );
+      this.saveOutbox();
+    }
+
+    async refreshSession() {
+      const response = await fetch(
+        `/api/v1/study-sessions/${this.sessionId}`,
+      );
+      if (!response.ok) {
+        throw new Error("无法刷新学习会话");
+      }
+      const state = await response.json();
+      this.session = state.session;
+      this.items = state.items;
+      this.currentIndex = this.items.findIndex((item) => item.result === null);
+      if (this.currentIndex < 0) {
+        this.currentIndex = this.items.length;
+      }
+      this.displayIndex = Math.min(this.currentIndex, this.items.length - 1);
+      this.render();
     }
 
     async finish() {

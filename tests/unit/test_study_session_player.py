@@ -1,6 +1,9 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from app.services.study_sessions import (
+    calculate_review_state,
     move_current_for_retry,
     remaining_milliseconds,
 )
@@ -44,3 +47,49 @@ def test_remaining_time_uses_an_absolute_deadline(
     expected: float,
 ) -> None:
     assert remaining_milliseconds(deadline, now) == expected
+
+
+@pytest.mark.parametrize(
+    ("current_box", "expected_box", "days"),
+    [
+        (0, 1, 3),
+        (1, 2, 7),
+        (2, 3, 14),
+        (3, 4, 30),
+        (4, 4, 30),
+    ],
+)
+def test_seen_advances_the_leitner_box(
+    current_box: int,
+    expected_box: int,
+    days: int,
+) -> None:
+    occurred_at = datetime(2026, 10, 13, tzinfo=UTC)
+
+    box, next_review_at = calculate_review_state(
+        current_box,
+        "seen",
+        occurred_at,
+    )
+
+    assert box == expected_box
+    assert next_review_at == occurred_at + timedelta(days=days)
+
+
+@pytest.mark.parametrize("result", ["seen", "again"])
+def test_first_outcome_starts_in_box_zero(result: str) -> None:
+    occurred_at = datetime(2026, 10, 13, tzinfo=UTC)
+
+    box, next_review_at = calculate_review_state(None, result, occurred_at)
+
+    assert box == 0
+    assert next_review_at == occurred_at + timedelta(days=1)
+
+
+def test_again_resets_to_box_zero() -> None:
+    occurred_at = datetime(2026, 10, 13, tzinfo=UTC)
+
+    box, next_review_at = calculate_review_state(4, "again", occurred_at)
+
+    assert box == 0
+    assert next_review_at == occurred_at + timedelta(days=1)
