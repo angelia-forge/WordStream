@@ -7,12 +7,14 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.repositories.learning import LearningRepository
 from app.repositories.settings import AppSettingRepository
+from app.repositories.study import StudyRepository
 from app.repositories.vocabularies import VocabularyRepository
 
 
 class AbstractUnitOfWork(ABC):
     learning: LearningRepository
     settings: AppSettingRepository
+    study: StudyRepository
     vocabularies: VocabularyRepository
 
     @abstractmethod
@@ -45,6 +47,7 @@ class SqlAlchemyUnitOfWork(AbstractUnitOfWork):
         self.session = self._session_factory()
         self.learning = LearningRepository(self.session)
         self.settings = AppSettingRepository(self.session)
+        self.study = StudyRepository(self.session)
         self.vocabularies = VocabularyRepository(self.session)
         return self
 

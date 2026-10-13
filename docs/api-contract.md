@@ -55,6 +55,23 @@ Requires `confirm_id={id}`. A missing or mismatched confirmation returns
 `CONFIRMATION_REQUIRED`. Deletion cascades to entries and active study state;
 learning events remain and their `entry_id` becomes null.
 
+## `GET /api/v1/vocabularies/{id}/plan`
+
+Returns the vocabulary's study plan. An existing vocabulary without a plan
+returns `404 PLAN_NOT_FOUND`.
+
+## `PUT /api/v1/vocabularies/{id}/plan`
+
+Creates or updates the vocabulary's single plan and always returns `200`.
+The request contains `daily_new_count`, `daily_review_count`,
+`interval_seconds`, `is_random`, and `is_loop`. Daily counts accept zero
+through 500; the interval accepts one through ten seconds.
+
+Queue generation selects due review states with `next_review_at <= now` and
+entries without any review state. Review entries always precede new entries.
+Random mode shuffles each group independently, while loop mode is returned as
+player metadata and does not change server ordering.
+
 ## `GET /api/v1/statistics`
 
 Returns `total_events`, `learned_days`, and `streak`. These values are computed
@@ -65,4 +82,4 @@ deleted.
 
 The common codes include `VALIDATION_ERROR`, `UNAUTHORIZED`, `CSRF_FAILED`,
 `RATE_LIMITED`, `AUTH_DISABLED`, `RESOURCE_NOT_FOUND`, and
-`CONFIRMATION_REQUIRED`.
+`CONFIRMATION_REQUIRED`. Study plan lookup also defines `PLAN_NOT_FOUND`.

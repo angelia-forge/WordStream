@@ -168,7 +168,7 @@ def test_delete_cascades_state_but_retains_history_and_statistics(
             select(Entry).where(Entry.vocabulary_id == vocabulary_id)
         )
         assert entry is not None
-        session.add(StudyPlan(vocabulary_id=vocabulary_id, daily_new_limit=10))
+        session.add(StudyPlan(vocabulary_id=vocabulary_id, daily_new_count=10))
         session.add(ReviewState(entry_id=entry.id, box_number=2))
         for offset in (1, 0):
             activity_date = local_today - timedelta(days=offset)

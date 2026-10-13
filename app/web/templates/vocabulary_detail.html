@@ -18,20 +18,56 @@
         <h1 class="truncate text-xl font-semibold">{{ vocabulary.name }}</h1>
       </div>
     </div>
-    <button
-      type="button"
-      class="flex size-11 shrink-0 items-center justify-center text-stone-500 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
-      title="删除词库"
-      data-delete-trigger
-      data-vocabulary-id="{{ vocabulary.id }}"
-      data-vocabulary-name="{{ vocabulary.name }}"
-      data-redirect-url="/vocabularies"
-      data-csrf-token="{{ csrf_token }}"
-    >
-      <i data-lucide="trash-2" class="size-5"></i>
-      <span class="sr-only">删除词库</span>
-    </button>
+    <div class="flex shrink-0 items-center">
+      <a
+        href="/vocabularies/{{ vocabulary.id }}/plan"
+        class="flex size-11 items-center justify-center text-stone-500 hover:bg-stone-100 hover:text-stone-950 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        title="配置陪读计划"
+      >
+        <i data-lucide="settings-2" class="size-5"></i>
+        <span class="sr-only">配置陪读计划</span>
+      </a>
+      <button
+        type="button"
+        class="flex size-11 items-center justify-center text-stone-500 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+        title="删除词库"
+        data-delete-trigger
+        data-vocabulary-id="{{ vocabulary.id }}"
+        data-vocabulary-name="{{ vocabulary.name }}"
+        data-redirect-url="/vocabularies"
+        data-csrf-token="{{ csrf_token }}"
+      >
+        <i data-lucide="trash-2" class="size-5"></i>
+        <span class="sr-only">删除词库</span>
+      </button>
+    </div>
   </header>
+
+  {% if plan_saved %}
+    <p class="mt-5 border-l-2 border-emerald-600 pl-3 text-sm text-emerald-800" role="status">
+      陪读计划已保存
+    </p>
+  {% endif %}
+
+  {% if has_plan %}
+    <section class="flex items-center gap-3 border-b border-stone-200 py-5">
+      <button
+        type="button"
+        disabled
+        title="播放器将在后续阶段接入"
+        class="inline-flex min-h-11 flex-1 cursor-not-allowed items-center justify-center gap-2 bg-stone-300 px-4 font-medium text-stone-600"
+      >
+        <i data-lucide="play" class="size-5"></i>
+        开始陪读
+      </button>
+      <a
+        href="/vocabularies/{{ vocabulary.id }}/plan"
+        class="inline-flex min-h-11 items-center justify-center border border-stone-300 bg-white px-4 font-medium hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+      >
+        编辑计划
+      </a>
+    </section>
+  {% endif %}
 
   <form method="get" action="/vocabularies/{{ vocabulary.id }}" class="space-y-3 py-5">
     <label class="relative block">

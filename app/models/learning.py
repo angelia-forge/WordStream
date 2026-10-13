@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -22,7 +23,18 @@ class StudyPlan(Base):
     __tablename__ = "study_plans"
     __table_args__ = (
         UniqueConstraint("vocabulary_id", name="uq_study_plans_vocabulary_id"),
-        CheckConstraint("daily_new_limit > 0", name="daily_new_limit_positive"),
+        CheckConstraint(
+            "daily_new_count >= 0 AND daily_new_count <= 500",
+            name="daily_new_count_range",
+        ),
+        CheckConstraint(
+            "daily_review_count >= 0 AND daily_review_count <= 500",
+            name="daily_review_count_range",
+        ),
+        CheckConstraint(
+            "interval_seconds >= 1 AND interval_seconds <= 10",
+            name="interval_seconds_range",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -30,15 +42,41 @@ class StudyPlan(Base):
         ForeignKey("vocabularies.id", ondelete="CASCADE"),
         nullable=False,
     )
-    daily_new_limit: Mapped[int] = mapped_column(
+    daily_new_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
         default=20,
+    )
+    daily_review_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=20,
+    )
+    interval_seconds: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=5,
+    )
+    is_random: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+    is_loop: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         default=utc_now,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+        onupdate=utc_now,
     )
 
 

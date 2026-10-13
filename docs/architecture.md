@@ -46,6 +46,14 @@ term, vocabulary, timezone, and activity-date snapshots. Historical statistics
 read only those snapshots, so deleting active study data does not alter totals
 or streaks. See [ADR 004](adr/004-history-retention.md).
 
+## Study planning
+
+Each vocabulary has at most one study plan, enforced by a database unique
+constraint. The study service owns plan upserts and queue assembly. Repositories
+return due reviews and entries without review state as separate, deterministically
+ordered groups; the service optionally shuffles each group, applies its limit,
+and concatenates reviews before new entries. Loop mode remains player metadata.
+
 ## Security boundary
 
 Local development may explicitly disable authentication. Production requires a

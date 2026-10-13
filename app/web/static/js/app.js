@@ -13,6 +13,7 @@ function initializeApp() {
   }
 
   initializeDeleteDialogs();
+  initializePlanForms();
 
   const workspace = document.querySelector("[data-import-workspace]");
   if (!workspace) {
@@ -212,6 +213,49 @@ function initializeApp() {
     item.append(count, caption);
     return item;
   }
+}
+
+function initializePlanForms() {
+  document.querySelectorAll("[data-plan-form]").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const submitButton = form.querySelector('button[type="submit"]');
+      const error = form.querySelector("[data-plan-error]");
+      submitButton.disabled = true;
+      error.hidden = true;
+      error.textContent = "";
+
+      const fields = form.elements;
+      const payload = {
+        daily_new_count: Number(fields.daily_new_count.value),
+        daily_review_count: Number(fields.daily_review_count.value),
+        interval_seconds: Number(fields.interval_seconds.value),
+        is_random: fields.is_random.checked,
+        is_loop: fields.is_loop.checked,
+      };
+
+      try {
+        const token = form.dataset.csrfToken;
+        const response = await fetch(form.dataset.endpoint, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { "X-CSRF-Token": token } : {}),
+          },
+          body: JSON.stringify(payload),
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error?.message || "保存失败");
+        }
+        window.location.assign(form.dataset.redirectUrl);
+      } catch (reason) {
+        error.textContent = reason instanceof Error ? reason.message : "保存失败";
+        error.hidden = false;
+        submitButton.disabled = false;
+      }
+    });
+  });
 }
 
 function initializeDeleteDialogs() {

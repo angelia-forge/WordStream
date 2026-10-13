@@ -111,3 +111,40 @@ def test_statistics_page_renders_retained_metrics(client: TestClient) -> None:
     assert "连续学习天数" in response.text
     assert "累计学习天数" in response.text
     assert "学习记录" in response.text
+
+
+def test_plan_page_and_configured_detail_are_rendered(
+    client: TestClient,
+) -> None:
+    vocabulary_id = import_text(
+        client,
+        "Plan words",
+        "term|meaning\nfocus|attention",
+    )
+
+    page = client.get(f"/vocabularies/{vocabulary_id}/plan")
+    assert page.status_code == 200
+    assert "data-plan-form" in page.text
+    assert page.text.count('inputmode="numeric"') == 3
+    assert 'name="interval_seconds"' in page.text
+
+    saved = client.put(
+        f"/api/v1/vocabularies/{vocabulary_id}/plan",
+        json={
+            "daily_new_count": 10,
+            "daily_review_count": 15,
+            "interval_seconds": 3,
+            "is_random": True,
+            "is_loop": False,
+        },
+    )
+    assert saved.status_code == 200
+
+    detail = client.get(
+        f"/vocabularies/{vocabulary_id}",
+        params={"plan_saved": "true"},
+    )
+    assert detail.status_code == 200
+    assert "陪读计划已保存" in detail.text
+    assert "开始陪读" in detail.text
+    assert "编辑计划" in detail.text

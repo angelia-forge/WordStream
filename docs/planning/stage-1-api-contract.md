@@ -24,7 +24,21 @@ remain planning baselines.
   confirmation returns `409 CONFIRMATION_REQUIRED`. Entries, the vocabulary
   study plan, and entry review states cascade; learning events remain with
   `entry_id=NULL`.
-- A study plan has `UNIQUE(vocabulary_id)` and is upserted with `PUT`.
+- A study plan has `UNIQUE(vocabulary_id)` and is upserted with `PUT`. It stores
+  `daily_new_count` and `daily_review_count` in the range 0 through 500,
+  `interval_seconds` in the range 1 through 10, plus `is_random` and `is_loop`.
+
+## Read-along queue
+
+- Due reviews have a review state with non-null `next_review_at <= now`.
+- New entries have no review state. An entry with a future or null
+  `next_review_at` is neither due nor new.
+- Without random mode, due reviews sort by due time then entry id; new entries
+  sort by creation time then entry id.
+- Random mode shuffles the two groups independently.
+- Limits are applied after group ordering, then the queue is concatenated as
+  reviews followed by new entries.
+- `is_loop` is returned as player metadata and never changes server ordering.
 
 ## Study endpoints
 

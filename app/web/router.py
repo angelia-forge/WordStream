@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.config import AuthMode
 from app.dependencies import ConfigDep, UowDep
+from app.schemas.study_plans import StudyPlanUpdate
 from app.security import (
     LoginRateLimiter,
     clear_session,
@@ -18,6 +19,7 @@ from app.security import (
     verify_shared_password,
 )
 from app.services.statistics import StatisticsService
+from app.services.study_plans import StudyPlanService
 from app.services.vocabularies import VocabularyService
 
 WEB_DIR = Path(__file__).resolve().parent
@@ -112,6 +114,7 @@ def vocabulary_detail(
     tag: Annotated[str | None, Query(max_length=100)] = None,
     sort: Literal["term", "created_at"] = "term",
     order: Literal["asc", "desc"] = "asc",
+    plan_saved: bool = False,
 ) -> Response:
     redirect = _login_redirect(request, config)
     if redirect is not None:
@@ -128,6 +131,7 @@ def vocabulary_detail(
         order=order,
     )
     tags = service.list_tags(vocabulary_id)
+    plan = StudyPlanService(uow).find_plan(vocabulary_id)
     return templates.TemplateResponse(
         request=request,
         name="vocabulary_detail.html",
@@ -140,6 +144,8 @@ def vocabulary_detail(
             "selected_tag": tag or "",
             "sort": sort,
             "order": order,
+            "has_plan": plan is not None,
+            "plan_saved": plan_saved,
             "previous_url": (
                 _page_url(
                     f"/vocabularies/{vocabulary_id}",
@@ -164,6 +170,29 @@ def vocabulary_detail(
                 if page * entries.page_size < entries.total
                 else None
             ),
+        },
+    )
+
+
+@router.get("/vocabularies/{vocabulary_id}/plan", response_class=HTMLResponse)
+def vocabulary_plan(
+    vocabulary_id: int,
+    request: Request,
+    config: ConfigDep,
+    uow: UowDep,
+) -> Response:
+    redirect = _login_redirect(request, config)
+    if redirect is not None:
+        return redirect
+    vocabulary = VocabularyService(uow).get_vocabulary(vocabulary_id)
+    plan = StudyPlanService(uow).find_plan(vocabulary_id) or StudyPlanUpdate()
+    return templates.TemplateResponse(
+        request=request,
+        name="vocabulary_plan.html",
+        context={
+            "csrf_token": request.session.get("csrf_token", ""),
+            "vocabulary": vocabulary,
+            "plan": plan,
         },
     )
 

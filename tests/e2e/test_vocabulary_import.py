@@ -146,6 +146,35 @@ def test_csv_upload_import(mobile_page: Page, live_server: str) -> None:
     assert _has_horizontal_overflow(mobile_page) is False
 
 
+def test_mobile_configures_and_saves_study_plan(
+    mobile_page: Page,
+    live_server: str,
+) -> None:
+    mobile_page.goto(f"{live_server}/vocabularies/import")
+    form = mobile_page.locator('form[data-mode="paste"]')
+    form.locator('input[name="name"]').fill("Plan vocabulary")
+    form.locator('textarea[name="text"]').fill("term|meaning\nfocus|专注")
+    form.get_by_role("button", name="解析预览").click()
+    mobile_page.locator("#import-preview").wait_for(state="visible")
+    mobile_page.get_by_role("button", name="确认导入").click()
+    mobile_page.wait_for_url("**/vocabularies/*")
+
+    mobile_page.get_by_role("link", name="配置陪读计划").click()
+    mobile_page.wait_for_url("**/plan")
+    mobile_page.get_by_label("每日新词数").fill("0")
+    mobile_page.get_by_label("每日复习数").fill("25")
+    mobile_page.get_by_label("自动切换间隔").fill("7")
+    mobile_page.get_by_label("随机播放").check()
+    mobile_page.get_by_label("循环播放").check()
+    mobile_page.get_by_role("button", name="保存计划").click()
+
+    mobile_page.wait_for_url("**?plan_saved=1")
+    assert mobile_page.get_by_text("陪读计划已保存").is_visible()
+    assert mobile_page.get_by_role("button", name="开始陪读").is_visible()
+    assert mobile_page.get_by_role("link", name="编辑计划").is_visible()
+    assert _has_horizontal_overflow(mobile_page) is False
+
+
 def test_mobile_delete_retains_history_statistics(
     mobile_page: Page,
     live_server: str,
