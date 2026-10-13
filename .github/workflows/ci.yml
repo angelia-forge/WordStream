@@ -9,35 +9,149 @@ permissions:
 
 jobs:
   quality:
+    name: Quality (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      ENVIRONMENT: test
-      AUTH_MODE: disabled
-      DATABASE_URL: sqlite:///./data/ci.db
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install
         run: python -m pip install -e ".[dev]"
-      - name: Install browser
-        run: python -m playwright install --with-deps chromium
       - name: Ruff
         run: ruff check .
       - name: Black
         run: black --check .
       - name: Mypy
         run: mypy app
-      - name: Build CSS
+      - name: Verify committed CSS
         run: |
           ./scripts/build_css.sh
           git diff --exit-code -- app/web/static/css/app.css
-      - name: Migrate
+
+  test:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    env:
+      ENVIRONMENT: test
+      AUTH_MODE: disabled
+      DATABASE_URL: sqlite:////tmp/wordstream-tests.db
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Unit, repository, and integration tests
+        run: pytest tests/unit tests/repository tests/integration
+      - name: Enforce core service coverage
+        run: coverage report --include="app/services/*" --fail-under=80
+
+  migration:
+    name: Alembic smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ENVIRONMENT: test
+      AUTH_MODE: disabled
+      DATABASE_URL: sqlite:////tmp/wordstream-migration.db
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Upgrade an empty database
         run: |
           alembic upgrade head
+          alembic current
           alembic check
-      - name: Test
-        run: pytest
+      - name: Run migration tests
+        run: pytest tests/integration/test_migrations.py --no-cov
+
+  e2e:
+    name: Playwright mobile E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ENVIRONMENT: test
+      AUTH_MODE: disabled
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Run mobile workflows
+        run: pytest tests/e2e --no-cov
+
+  docker:
+    name: Docker smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [quality, test, migration, e2e]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build --tag wordstream:ci .
+      - name: Start container
+        run: |
+          docker volume create wordstream-ci-data
+          docker run --detach \
+            --name wordstream-ci \
+            --publish 8000:8000 \
+            --volume wordstream-ci-data:/data \
+            --env ENVIRONMENT=production \
+            --env AUTH_MODE=password \
+            --env APP_PASSWORD=ci-password \
+            --env SECRET_KEY=ci-secret-with-enough-entropy \
+            --env APP_TIMEZONE=UTC \
+            --env DATABASE_URL=sqlite:////data/wordstream.db \
+            wordstream:ci
+      - name: Wait for health
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/api/v1/health; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs wordstream-ci
+          exit 1
+      - name: Verify persisted database
+        run: |
+          docker restart wordstream-ci
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/api/v1/health; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+      - name: Show logs on failure
+        if: failure()
+        run: docker logs wordstream-ci
+      - name: Clean up
+        if: always()
+        run: |
+          docker rm --force wordstream-ci || true
+          docker volume rm wordstream-ci-data || true

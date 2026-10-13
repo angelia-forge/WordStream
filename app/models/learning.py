@@ -250,7 +250,7 @@ class LearningEvent(Base):
     term_key: Mapped[str] = mapped_column(String(500), nullable=False)
     term_snapshot: Mapped[str] = mapped_column(String(500), nullable=False)
     vocabulary_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-    result: Mapped[str] = mapped_column(String(16), nullable=False)
+    result: Mapped[str] = mapped_column(String(32), nullable=False)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
     client_attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(

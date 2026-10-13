@@ -212,6 +212,7 @@ def test_mobile_study_player_full_flow(
     mobile_page.locator("#import-preview").wait_for(state="visible")
     mobile_page.get_by_role("button", name="确认导入").click()
     mobile_page.wait_for_url(re.compile(r"/vocabularies/\d+(?:\?.*)?$"))
+    vocabulary_id = int(urlparse(mobile_page.url).path.rsplit("/", 1)[-1])
 
     mobile_page.get_by_role("link", name="配置陪读计划").click()
     mobile_page.get_by_label("每日新词数").fill("5")
@@ -277,6 +278,16 @@ def test_mobile_study_player_full_flow(
             assert session.scalar(select(func.count()).select_from(ReviewState)) >= 5
     finally:
         engine.dispose()
+
+    mobile_page.goto(f"{live_server}/statistics")
+    mobile_page.get_by_label("词库").select_option(str(vocabulary_id))
+    mobile_page.get_by_role("button", name="筛选").click()
+    mobile_page.wait_for_url(f"**/statistics?vocabulary_id={vocabulary_id}")
+    assert (
+        mobile_page.locator("article", has_text="今日已学")
+        .get_by_text("5", exact=True)
+        .is_visible()
+    )
 
 
 def test_offline_outbox_retries_when_network_returns(

@@ -76,6 +76,28 @@ def outcome(
     }
 
 
+def test_session_endpoints_reject_invalid_or_missing_resources(
+    client: TestClient,
+) -> None:
+    invalid_create = client.post(
+        "/api/v1/study-sessions",
+        json={"vocabulary_id": 0},
+    )
+    assert invalid_create.status_code == 422
+
+    missing_session_id = 999_999
+    missing_get = client.get(f"/api/v1/study-sessions/{missing_session_id}")
+    missing_batch = client.post(
+        f"/api/v1/study-sessions/{missing_session_id}/outcomes/batch",
+        json={"outcomes": [outcome(str(uuid4()), "seen")]},
+    )
+    missing_finish = client.post(f"/api/v1/study-sessions/{missing_session_id}/finish")
+
+    for response in (missing_get, missing_batch, missing_finish):
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+
 def test_create_requires_plan_and_non_empty_queue(client: TestClient) -> None:
     vocabulary_id = import_vocabulary(client)
 

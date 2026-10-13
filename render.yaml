@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: wordstream
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/v1/health
+    numInstances: 1
+    disk:
+      name: wordstream-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: AUTH_MODE
+        value: password
+      - key: DATABASE_URL
+        value: sqlite:////data/wordstream.db
+      - key: APP_TIMEZONE
+        value: Asia/Shanghai
+      - key: SECRET_KEY
+        generateValue: true
+      - key: APP_PASSWORD
+        sync: false

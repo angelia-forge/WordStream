@@ -1,31 +1,40 @@
 # WordStream
 
-WordStream (单词流) is a mobile-first words and fixed phrases read-along PWA
-built as a modular FastAPI monolith.
+WordStream (单词流) is a mobile-first vocabulary read-along PWA. It imports
+words and phrases, builds review-first study queues, reads entries with the
+browser speech API, records binary Leitner outcomes, and reports timezone-aware
+daily progress.
 
-The application includes the PWA shell, SQLite migrations, single-user
-security, vocabulary import and browsing, study-plan configuration, and a
-resumable mobile read-along player. The player supports browser speech,
-timestamp-based automatic switching, pause/resume, retry scheduling, and
-persisted learning history.
+![WordStream mobile study player](docs/assets/mobile-study.png)
 
 ## Architecture
 
-HTTP APIs and Jinja2 web routes call services. Services own transaction
-boundaries through a Unit of Work; repositories may query, add, and flush but
-never commit. SQLAlchemy models are migrated exclusively through Alembic.
+```mermaid
+flowchart LR
+    Browser[Mobile browser] --> Web[Jinja pages + JavaScript]
+    Browser --> API[FastAPI v1 API]
+    Web --> API
+    API --> Services[Application services]
+    Services --> UoW[Unit of Work]
+    UoW --> Repositories[Repositories]
+    Repositories --> SQLite[(SQLite /data)]
+    Alembic[Alembic migrations] --> SQLite
+```
 
-See [architecture](docs/architecture.md), [ADRs](docs/adr/), and the
-[later-stage planning baseline](docs/planning/stage-1-api-contract.md).
+WordStream is a modular monolith. Services own transaction boundaries,
+repositories contain persistence queries, and Alembic exclusively owns schema
+evolution. See [architecture](docs/architecture.md) and
+[architecture decisions](docs/adr/).
 
 ## Requirements
 
-- Python 3.11+
-- `curl` for installing the pinned Tailwind standalone CLI
+- Python 3.11 or 3.12
+- `curl` for the pinned Tailwind standalone CLI
+- Playwright Chromium for browser tests
 
-No Node.js installation or frontend package manager is required.
+Node.js is not required.
 
-## Local setup
+## Local Setup
 
 ```bash
 python3.12 -m venv .venv
@@ -38,59 +47,89 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-Open `http://127.0.0.1:8000/`. The API health endpoint is
-`http://127.0.0.1:8000/api/v1/health`.
+Open `http://127.0.0.1:8000/`. A healthy installation returns database status
+`ok` and migration status `current`:
 
-Local development defaults to `AUTH_MODE=disabled`. To exercise the password
-gate, set `AUTH_MODE=password`, `APP_PASSWORD`, and `SECRET_KEY`.
+```bash
+curl http://127.0.0.1:8000/api/v1/health
+```
 
-## Checks
+Local development defaults to `AUTH_MODE=disabled`. For the password gate, set
+`AUTH_MODE=password`, `APP_PASSWORD`, and `SECRET_KEY`.
+
+## Main Workflow
+
+1. Open `/vocabularies/import` and paste delimited text or upload CSV/TSV.
+2. Preview and confirm the import.
+3. Configure the vocabulary's daily new/review limits and playback interval.
+4. Start the read-along player and record `seen` or `again`.
+5. Open `/statistics` to inspect today's learned terms, due reviews, streak,
+   and current entry count.
+
+See the [demo walkthrough](docs/demo.md) for a sample dataset.
+
+## Tests
 
 ```bash
 ruff check .
 black --check .
 mypy app
-pytest
+pytest tests/unit tests/repository tests/integration
+coverage report --include="app/services/*" --fail-under=80
+pytest tests/e2e --no-cov
 alembic check
-pre-commit run --all-files
 ```
 
-Pytest includes branch coverage and requires at least 80%. Install the Git
-hooks with `pre-commit install`.
+The normal pytest configuration enforces at least 80% branch coverage for the
+application. CI separately enforces 80% coverage for core services. E2E tests
+run without coverage because they exercise the application in another process.
 
-The E2E suite uses Playwright Chromium. On macOS, a local system Chrome can be
-used explicitly with `RUN_SYSTEM_CHROME_E2E=1 pytest tests/e2e --no-cov`.
+On macOS, system Chrome can be selected when bundled Playwright Chromium cannot
+start:
 
-The import page is `http://127.0.0.1:8000/vocabularies/import`.
+```bash
+RUN_SYSTEM_CHROME_E2E=1 pytest tests/e2e --no-cov
+```
 
-## Tailwind
+## Docker
 
-`./scripts/build_css.sh` downloads Tailwind CSS standalone `v3.4.17` into the
-ignored `.tools` directory when needed, then writes the committed
-`app/web/static/css/app.css`.
+```bash
+docker build -t wordstream .
+docker volume create wordstream-data
+docker run -d --name wordstream -p 8000:8000 \
+  -v wordstream-data:/data \
+  -e ENVIRONMENT=production \
+  -e AUTH_MODE=password \
+  -e APP_PASSWORD='replace-me' \
+  -e SECRET_KEY='replace-with-a-long-random-value' \
+  -e APP_TIMEZONE=Asia/Shanghai \
+  -e DATABASE_URL=sqlite:////data/wordstream.db \
+  wordstream
+```
+
+The container upgrades the mounted database before starting one Uvicorn worker.
+SQLite deployments must remain single-instance unless the persistence design is
+changed.
 
 ## Deployment
 
-Production deployment is intentionally left to a later stage. The minimum
-contract is:
+Render and Fly.io both use the same container and persistent `/data` volume.
+`render.yaml` is ready to create a Render service. Copy `fly.toml.example` to
+`fly.toml`, choose a unique app name, create the volume, and set secrets.
 
-- run `alembic upgrade head` before serving traffic;
-- set `ENVIRONMENT=production`, `AUTH_MODE=password`, `APP_PASSWORD`, and
-  `SECRET_KEY`;
-- terminate HTTPS at the reverse proxy;
-- persist and back up the SQLite `data` directory;
-- run one application process unless SQLite write behavior has been reviewed.
+Detailed commands, backup/restore procedures, and platform tradeoffs are in
+[deployment](docs/deployment.md).
 
-Production startup rejects missing password or signing-key configuration.
+## API
 
-## Acceptance
+Interactive OpenAPI documentation is available at `/docs`. Copyable examples
+for authentication, imports, plans, study outcomes, statistics, and deletion
+are in [API examples](docs/api-examples.md).
 
-```bash
-alembic upgrade head
-pytest
-uvicorn app.main:app
-curl http://127.0.0.1:8000/api/v1/health
-```
+## Documentation
 
-The health response must report database status `ok` and migration status
-`current`.
+- [Architecture](docs/architecture.md)
+- [API examples](docs/api-examples.md)
+- [Deployment and backups](docs/deployment.md)
+- [Demo walkthrough](docs/demo.md)
+- [Architecture decision records](docs/adr/)

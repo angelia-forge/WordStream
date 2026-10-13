@@ -1,4 +1,4 @@
-# ADR 005: Daily statistics and timezone snapshots
+# ADR 007: Daily statistics and timezone snapshots
 
 Status: Accepted
 

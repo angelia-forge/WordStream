@@ -1,75 +1,105 @@
 # WordStream Architecture
 
-## Scope
+## System Context
 
-WordStream is a mobile-first FastAPI application with SQLite, server-rendered
-pages, migrations, request tracing, and a single-user security boundary.
-Vocabulary import and management use the same layered application structure as
-the settings foundation.
+WordStream is a single-user, mobile-first FastAPI application. Server-rendered
+Jinja pages and small JavaScript modules provide the UI; the same process serves
+the JSON API and static PWA shell. SQLite is the only stateful dependency.
 
-## Layers
+```mermaid
+flowchart TB
+    User[Single user] -->|HTTPS| Platform[Render or Fly.io proxy]
+    Platform -->|HTTP :8000| App[WordStream container<br/>one Uvicorn worker]
+    App --> DB[(SQLite database<br/>persistent /data volume)]
+    Browser[Browser speechSynthesis] -. local speech .-> User
+```
 
-- `api`: HTTP validation, authentication, status codes, and response schemas.
-- `web`: Jinja2 pages and static PWA shell resources.
-- `services`: use cases and transaction boundaries.
-- `repositories`: persistence operations without transaction ownership.
+HTTPS terminates at the platform. The application container and volume must run
+as one instance because SQLite does not provide distributed write coordination.
+
+## Application Layers
+
+```mermaid
+flowchart LR
+    Routes[API + web routes] --> Services[Services]
+    Services --> UoW[Unit of Work]
+    UoW --> Repositories[Repositories]
+    Repositories --> Models[SQLAlchemy models]
+    Models --> SQLite[(SQLite)]
+    Schemas[Pydantic schemas] -. validation .-> Routes
+    Alembic[Alembic] --> SQLite
+```
+
+- `api`: request validation, authentication, status codes, and response models.
+- `web`: Jinja pages and static PWA resources.
+- `services`: use cases, business rules, and transaction ownership.
+- `repositories`: SQL queries, adds, and flushes without commits.
 - `models`: SQLAlchemy persistence models.
-- `schemas`: Pydantic request and response models.
+- `schemas`: Pydantic API contracts.
 - `utils`: framework-light shared helpers.
 
-Dependencies point inward from API and web routes to services, then to Unit of
-Work and repositories. Repositories may query, add, and flush, but must not
-commit or roll back. A service commits a complete use case; an exception
-causes rollback when the Unit of Work exits.
+A service opens a Unit of Work and commits one complete use case. Exceptions
+roll back when the Unit of Work exits. Application startup never calls
+`create_all`; the container entrypoint runs `alembic upgrade head`.
 
-## Runtime flow
+## Study Flow
 
-1. Session and request-ID middleware process the incoming request.
-2. API or web routes validate input and invoke a service.
-3. The service opens a Unit of Work.
-4. Repositories operate on the Unit of Work session.
-5. The service commits, or the Unit of Work rolls back on failure.
-6. Errors use the common response envelope and include the request ID.
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant A as API
+    participant S as StudySessionService
+    participant D as SQLite
 
-## Data evolution
+    B->>A: Create or resume session
+    A->>S: vocabulary_id + resume_existing
+    S->>D: Due reviews and unseen entries
+    S->>D: Save queue snapshots
+    A-->>B: Ordered session items
+    B->>B: Speech + absolute deadline timer
+    B->>A: Batch outcomes with client_event_id
+    A->>S: Validate time and idempotency
+    S->>D: Event + item + review state (one transaction)
+    A-->>B: Accepted/duplicate counts and state
+```
 
-Alembic owns all schema changes. Application startup never calls
-`create_all`. CI and integration tests verify that an empty SQLite database can
-upgrade to `head` and that model metadata has no pending migration operations.
+The queue always places due reviews before new entries. Random mode shuffles
+within each group only. `again` returns review state to box 0; `seen` advances
+one box. The browser stores unconfirmed batches in local storage and retries
+them after network recovery.
 
-## Vocabulary deletion
+## Historical and Live Data
 
-Vocabulary deletion is one service-owned Unit of Work transaction. Database
-foreign keys cascade deletion to entries, study plans, and review states.
-Learning events are retained with `entry_id` set to null and contain immutable
-term, vocabulary, timezone, and activity-date snapshots. Historical statistics
-read only those snapshots, so deleting active study data does not alter totals
-or streaks. See [ADR 004](adr/004-history-retention.md).
+Learning events are append-only facts containing term, vocabulary, timezone,
+and local activity-date snapshots. Vocabulary deletion cascades to entries,
+plans, sessions, and review state while setting the event's `entry_id` to null.
+Historical learned counts and streaks therefore survive deletion; current due
+review and entry counts do not.
 
-## Study planning
+## Security Boundary
 
-Each vocabulary has at most one study plan, enforced by a database unique
-constraint. The study service owns plan upserts and queue assembly. Repositories
-return due reviews and entries without review state as separate, deterministically
-ordered groups; the service optionally shuffles each group, applies its limit,
-and concatenates reviews before new entries. Loop mode remains player metadata.
+Production requires shared-password authentication and a signing key.
+Browser sessions use signed, HTTP-only, SameSite=Lax, Secure cookies.
+Cookie-authenticated writes require a CSRF header. An optional API key supports
+automation. No CORS middleware is installed, so cross-origin callers receive no
+permission headers. Secrets and imported content are excluded from application
+logs.
 
-## Security boundary
+## Time and Scheduling
 
-Local development may explicitly disable authentication. Production requires a
-shared password and session signing key. Browser sessions use signed,
-HTTP-only cookies and CSRF protection for writes. Secrets and imported content
-must never be logged.
+All event instants are accepted and compared in UTC. At write time, the current
+IANA application timezone is stored with the derived local `activity_date`.
+Changing the timezone affects future events only. Player advancement uses an
+absolute deadline so a backgrounded mobile page advances at most once when it
+becomes visible again.
 
-## Frontend boundary
+## Verification Boundaries
 
-Jinja2 renders the application shell. HTMX and Alpine.js are available for
-later progressive enhancement. Tailwind CSS is compiled with its pinned
-standalone CLI; no Node package or frontend bundler is required. The service
-worker caches static shell assets only and does not claim offline learning.
-
-## Observability
-
-Request middleware accepts a valid UUIDv4 `X-Request-ID` or generates one. The
-same value is returned in the response header, attached to structured standard
-library logs, and included in structured errors.
+- Unit tests cover parsers, queue rules, Leitner transitions, timing, and
+  statistics.
+- Repository tests run SQL against migrated temporary SQLite files.
+- Integration tests cover API behavior, auth, CSRF, rollback, migrations,
+  idempotency, and lock conflicts.
+- Playwright tests use a 390x844 viewport and exercise import, planning,
+  playback, persistence, speech failures, background timing, and statistics.
+- CI builds and restarts the production Docker image with a named volume.
