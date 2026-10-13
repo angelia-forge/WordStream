@@ -147,4 +147,18 @@ def test_plan_page_and_configured_detail_are_rendered(
     assert detail.status_code == 200
     assert "陪读计划已保存" in detail.text
     assert "开始陪读" in detail.text
+    assert "data-start-study" in detail.text
     assert "编辑计划" in detail.text
+
+    created = client.post(
+        "/api/v1/study-sessions",
+        json={"vocabulary_id": vocabulary_id, "resume_existing": True},
+    )
+    assert created.status_code == 201
+    session_id = created.json()["session"]["id"]
+
+    player = client.get(f"/study/{session_id}")
+    assert player.status_code == 200
+    assert "data-study-player" in player.text
+    assert "/static/js/study-player.js" in player.text
+    assert "focus" in player.text

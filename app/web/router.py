@@ -20,6 +20,7 @@ from app.security import (
 )
 from app.services.statistics import StatisticsService
 from app.services.study_plans import StudyPlanService
+from app.services.study_sessions import StudySessionService
 from app.services.vocabularies import VocabularyService
 
 WEB_DIR = Path(__file__).resolve().parent
@@ -115,6 +116,7 @@ def vocabulary_detail(
     sort: Literal["term", "created_at"] = "term",
     order: Literal["asc", "desc"] = "asc",
     plan_saved: bool = False,
+    study_finished: bool = False,
 ) -> Response:
     redirect = _login_redirect(request, config)
     if redirect is not None:
@@ -146,6 +148,7 @@ def vocabulary_detail(
             "order": order,
             "has_plan": plan is not None,
             "plan_saved": plan_saved,
+            "study_finished": study_finished,
             "previous_url": (
                 _page_url(
                     f"/vocabularies/{vocabulary_id}",
@@ -193,6 +196,28 @@ def vocabulary_plan(
             "csrf_token": request.session.get("csrf_token", ""),
             "vocabulary": vocabulary,
             "plan": plan,
+        },
+    )
+
+
+@router.get("/study/{session_id}", response_class=HTMLResponse)
+def study_player(
+    session_id: int,
+    request: Request,
+    config: ConfigDep,
+    uow: UowDep,
+) -> Response:
+    redirect = _login_redirect(request, config)
+    if redirect is not None:
+        return redirect
+    study_session = StudySessionService(uow, config).get(session_id)
+    return templates.TemplateResponse(
+        request=request,
+        name="study_player.html",
+        context={
+            "csrf_token": request.session.get("csrf_token", ""),
+            "study_session": study_session.model_dump(mode="json"),
+            "tts_rate": config.tts_rate,
         },
     )
 

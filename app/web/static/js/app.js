@@ -14,6 +14,7 @@ function initializeApp() {
 
   initializeDeleteDialogs();
   initializePlanForms();
+  initializeStudyStartButtons();
 
   const workspace = document.querySelector("[data-import-workspace]");
   if (!workspace) {
@@ -213,6 +214,36 @@ function initializeApp() {
     item.append(count, caption);
     return item;
   }
+}
+
+function initializeStudyStartButtons() {
+  document.querySelectorAll("[data-start-study]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        const token = button.dataset.csrfToken;
+        const response = await fetch("/api/v1/study-sessions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { "X-CSRF-Token": token } : {}),
+          },
+          body: JSON.stringify({
+            vocabulary_id: Number(button.dataset.vocabularyId),
+            resume_existing: true,
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error?.message || "无法开始陪读");
+        }
+        window.location.assign(`/study/${payload.session.id}`);
+      } catch (reason) {
+        window.alert(reason instanceof Error ? reason.message : "无法开始陪读");
+        button.disabled = false;
+      }
+    });
+  });
 }
 
 function initializePlanForms() {

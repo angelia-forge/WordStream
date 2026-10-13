@@ -1,7 +1,8 @@
-const CACHE_NAME = "wordstream-shell-v5";
+const CACHE_NAME = "wordstream-shell-v6";
 const SHELL_ASSETS = [
   "/static/css/app.css",
   "/static/js/app.js",
+  "/static/js/study-player.js",
   "/static/manifest.webmanifest",
 ];
 

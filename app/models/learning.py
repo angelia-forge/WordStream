@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Date,
@@ -12,8 +15,9 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    text,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
 from app.models.setting import utc_now
@@ -80,6 +84,123 @@ class StudyPlan(Base):
     )
 
 
+class StudySession(Base):
+    __tablename__ = "study_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'finished', 'abandoned')",
+            name="status_allowed",
+        ),
+        CheckConstraint("current_index >= 0", name="current_index_non_negative"),
+        Index("ix_study_sessions_vocabulary_id", "vocabulary_id"),
+        Index(
+            "uq_study_sessions_active_vocabulary",
+            "vocabulary_id",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plan_id: Mapped[int | None] = mapped_column(
+        ForeignKey("study_plans.id", ondelete="SET NULL"),
+    )
+    vocabulary_id: Mapped[int] = mapped_column(
+        ForeignKey("vocabularies.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    current_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    plan_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+    items: Mapped[list[SessionItem]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="SessionItem.position",
+    )
+
+
+class SessionItem(Base):
+    __tablename__ = "session_items"
+    __table_args__ = (
+        CheckConstraint("position >= 0", name="position_non_negative"),
+        CheckConstraint("source IN ('review', 'new')", name="source_allowed"),
+        CheckConstraint(
+            "result IS NULL OR result IN ('seen', 'again')",
+            name="result_allowed",
+        ),
+        CheckConstraint("attempt_count >= 0", name="attempt_count_non_negative"),
+        Index("ix_session_items_session_position", "session_id", "position"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid4()),
+    )
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("study_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    entry_id: Mapped[int] = mapped_column(
+        ForeignKey("entries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    entry_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    result: Mapped[str | None] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+    session: Mapped[StudySession] = relationship(back_populates="items")
+    attempts: Mapped[list[SessionAttempt]] = relationship(
+        back_populates="session_item",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class SessionAttempt(Base):
+    __tablename__ = "session_attempts"
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('seen', 'again', 'replayed')",
+            name="action_allowed",
+        ),
+        Index("ix_session_attempts_session_item_id", "session_item_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_item_id: Mapped[str] = mapped_column(
+        ForeignKey("session_items.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+    session_item: Mapped[SessionItem] = relationship(back_populates="attempts")
+
+
 class ReviewState(Base):
     __tablename__ = "review_states"
     __table_args__ = (
@@ -109,6 +230,10 @@ class LearningEvent(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("session_items.id", ondelete="SET NULL"),
+        unique=True,
+    )
     entry_id: Mapped[int | None] = mapped_column(
         ForeignKey("entries.id", ondelete="SET NULL"),
     )

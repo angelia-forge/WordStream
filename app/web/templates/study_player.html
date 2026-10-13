@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}陪读 · WordStream{% endblock %}
+
+{% block content %}
+  <div
+    class="mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-3xl flex-col"
+    data-study-player
+    data-session-id="{{ study_session.session.id }}"
+    data-vocabulary-id="{{ study_session.session.vocabulary_id }}"
+    data-csrf-token="{{ csrf_token }}"
+    data-tts-rate="{{ tts_rate }}"
+  >
+    <header class="flex min-h-14 items-center justify-between gap-4 border-b border-stone-200">
+      <div>
+        <p class="text-sm text-stone-500" data-study-progress>第 1 / 1 个</p>
+        <p class="font-medium" data-study-remaining>会话剩余 1 个</p>
+      </div>
+      <div class="flex items-center gap-2 text-sm text-stone-500">
+        <i data-lucide="volume-2" class="size-4"></i>
+        <span data-tts-status>语音准备中</span>
+      </div>
+    </header>
+
+    <p
+      class="mt-4 border-l-2 border-red-500 pl-3 text-sm text-red-800"
+      role="alert"
+      data-study-error
+      hidden
+    ></p>
+
+    <section
+      class="flex min-h-0 flex-1 flex-col justify-center py-8 text-center sm:mx-auto sm:w-full sm:max-w-2xl"
+      aria-live="polite"
+    >
+      <p class="mb-3 text-sm font-medium text-emerald-700" data-study-source></p>
+      <h1
+        class="break-words text-4xl font-semibold leading-tight sm:text-5xl"
+        data-study-term
+      ></h1>
+      <div class="mt-4 flex min-h-6 flex-wrap justify-center gap-x-3 text-stone-500">
+        <span data-study-pos></span>
+        <span data-study-phonetic></span>
+      </div>
+      <p
+        class="mx-auto mt-8 max-w-xl break-words text-xl leading-8 text-stone-800"
+        data-study-meaning
+      ></p>
+      <p
+        class="mx-auto mt-5 max-w-xl break-words border-l-2 border-stone-300 pl-4 text-left leading-7 text-stone-600"
+        data-study-example
+      ></p>
+    </section>
+
+    <section class="border-t border-stone-200 pb-2 pt-4" aria-label="播放器控制">
+      <div class="grid grid-cols-4 gap-2 sm:grid-cols-5">
+        <button
+          type="button"
+          class="inline-flex min-h-12 items-center justify-center gap-2 border border-amber-300 bg-amber-50 px-2 text-sm font-medium text-amber-900 disabled:cursor-not-allowed disabled:opacity-40"
+          data-study-again
+          title="重来"
+        >
+          <i data-lucide="rotate-ccw" class="size-5"></i>
+          <span>重来</span>
+        </button>
+        <button
+          type="button"
+          class="inline-flex min-h-12 items-center justify-center border border-stone-300 bg-white disabled:cursor-not-allowed disabled:opacity-40"
+          data-study-previous
+          title="上一个"
+        >
+          <i data-lucide="skip-back" class="size-5"></i>
+          <span class="sr-only">上一个</span>
+        </button>
+        <button
+          type="button"
+          class="inline-flex min-h-12 items-center justify-center bg-stone-900 text-white disabled:cursor-not-allowed disabled:opacity-40"
+          data-study-toggle
+          title="暂停"
+        >
+          <i data-lucide="pause" class="size-5" data-study-toggle-icon></i>
+          <span class="sr-only" data-study-toggle-label>暂停</span>
+        </button>
+        <button
+          type="button"
+          class="inline-flex min-h-12 items-center justify-center border border-stone-300 bg-white disabled:cursor-not-allowed disabled:opacity-40"
+          data-study-next
+          title="下一个"
+        >
+          <i data-lucide="skip-forward" class="size-5"></i>
+          <span class="sr-only">下一个</span>
+        </button>
+        <button
+          type="button"
+          class="col-span-4 inline-flex min-h-12 items-center justify-center gap-2 border border-red-300 bg-white px-3 text-sm font-medium text-red-800 sm:col-span-1"
+          data-study-finish
+        >
+          <i data-lucide="square" class="size-4"></i>
+          结束
+        </button>
+      </div>
+    </section>
+  </div>
+
+  <script type="application/json" id="study-session-data">{{ study_session | tojson }}</script>
+{% endblock %}
+
+{% block scripts %}
+  <script defer src="/static/js/study-player.js"></script>
+{% endblock %}

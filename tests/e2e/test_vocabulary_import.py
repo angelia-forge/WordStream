@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -8,6 +9,7 @@ import time
 import urllib.request
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -18,7 +20,7 @@ from sqlalchemy import func, select
 from app.config import AuthMode, Environment, Settings
 from app.db import create_database_engine, create_session_factory
 from app.models.learning import LearningEvent, ReviewState, StudyPlan
-from app.models.vocabulary import Entry
+from app.models.vocabulary import Entry, Vocabulary
 
 
 @pytest.fixture(scope="module")
@@ -84,7 +86,15 @@ def browser() -> Iterator[Browser]:
         try:
             browser = playwright.chromium.launch()
         except Error as exc:
-            pytest.skip(f"Playwright Chromium is not installed: {exc}")
+            chrome_path = Path(
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            )
+            if (
+                os.environ.get("RUN_SYSTEM_CHROME_E2E") != "1"
+                or not chrome_path.exists()
+            ):
+                pytest.skip(f"Playwright Chromium is not installed: {exc}")
+            browser = playwright.chromium.launch(executable_path=str(chrome_path))
         yield browser
         browser.close()
 
@@ -113,7 +123,7 @@ def test_paste_preview_confirm_and_phrase_detail(
     assert mobile_page.get_by_text("in order to", exact=True).is_visible()
     mobile_page.get_by_role("button", name="确认导入").click()
 
-    mobile_page.wait_for_url("**/vocabularies/*")
+    mobile_page.wait_for_url(re.compile(r"/vocabularies/\d+(?:\?.*)?$"))
     assert mobile_page.get_by_role("heading", name="Travel phrases").is_visible()
     entry = mobile_page.locator("article")
     assert entry.get_by_text("in order to", exact=True).is_visible()
@@ -140,7 +150,7 @@ def test_csv_upload_import(mobile_page: Page, live_server: str) -> None:
     assert mobile_page.get_by_text("focus", exact=True).is_visible()
     mobile_page.get_by_role("button", name="确认导入").click()
 
-    mobile_page.wait_for_url("**/vocabularies/*")
+    mobile_page.wait_for_url(re.compile(r"/vocabularies/\d+(?:\?.*)?$"))
     assert mobile_page.get_by_role("heading", name="Uploaded words").is_visible()
     assert mobile_page.locator("article").get_by_text("focus", exact=True).is_visible()
     assert _has_horizontal_overflow(mobile_page) is False
@@ -157,7 +167,7 @@ def test_mobile_configures_and_saves_study_plan(
     form.get_by_role("button", name="解析预览").click()
     mobile_page.locator("#import-preview").wait_for(state="visible")
     mobile_page.get_by_role("button", name="确认导入").click()
-    mobile_page.wait_for_url("**/vocabularies/*")
+    mobile_page.wait_for_url(re.compile(r"/vocabularies/\d+(?:\?.*)?$"))
 
     mobile_page.get_by_role("link", name="配置陪读计划").click()
     mobile_page.wait_for_url("**/plan")
@@ -175,6 +185,152 @@ def test_mobile_configures_and_saves_study_plan(
     assert _has_horizontal_overflow(mobile_page) is False
 
 
+def test_mobile_study_player_full_flow(
+    mobile_page: Page,
+    live_server: str,
+) -> None:
+    mobile_page.add_init_script(_speech_mock("ready"))
+    mobile_page.goto(f"{live_server}/vocabularies/import")
+    form = mobile_page.locator('form[data-mode="paste"]')
+    form.locator('input[name="name"]').fill("Player workflow")
+    form.locator('textarea[name="text"]').fill(
+        "term|meaning|pos|phonetic|example\n"
+        "alpha|一|noun|/a/|alpha example\n"
+        "bravo|二|noun|/b/|bravo example\n"
+        "charlie|三|noun|/c/|charlie example\n"
+        "delta|四|noun|/d/|delta example\n"
+        "echo|五|noun|/e/|echo example"
+    )
+    form.get_by_role("button", name="解析预览").click()
+    mobile_page.locator("#import-preview").wait_for(state="visible")
+    mobile_page.get_by_role("button", name="确认导入").click()
+    mobile_page.wait_for_url(re.compile(r"/vocabularies/\d+(?:\?.*)?$"))
+
+    mobile_page.get_by_role("link", name="配置陪读计划").click()
+    mobile_page.get_by_label("每日新词数").fill("5")
+    mobile_page.get_by_label("每日复习数").fill("0")
+    mobile_page.get_by_label("自动切换间隔").fill("1")
+    mobile_page.get_by_role("button", name="保存计划").click()
+    mobile_page.wait_for_url("**?plan_saved=1")
+    mobile_page.get_by_role("button", name="开始陪读").click()
+    mobile_page.wait_for_url("**/study/*")
+
+    term = mobile_page.locator("[data-study-term]")
+    assert term.text_content() == "alpha"
+    mobile_page.wait_for_function(
+        "() => document.querySelector('[data-study-term]').textContent === 'bravo'"
+    )
+    mobile_page.get_by_role("button", name="暂停").click()
+    paused_term = term.text_content()
+    mobile_page.wait_for_timeout(1_200)
+    assert term.text_content() == paused_term
+
+    mobile_page.get_by_role("button", name="继续").click()
+    mobile_page.wait_for_function(
+        "(previous) => document.querySelector('[data-study-term]').textContent "
+        "!== previous",
+        arg=paused_term,
+    )
+    mobile_page.get_by_role("button", name="暂停").click()
+    retry_term = term.text_content()
+    mobile_page.get_by_role("button", name="重来").click()
+    assert term.text_content() != retry_term
+    mobile_page.get_by_role("button", name="下一个").click()
+    assert term.text_content() != retry_term
+    mobile_page.get_by_role("button", name="下一个").click()
+    assert term.text_content() == retry_term
+
+    mobile_page.get_by_role("button", name="结束").click()
+    mobile_page.wait_for_url("**?study_finished=1")
+    assert mobile_page.get_by_text("本次陪读已结束").is_visible()
+    assert _has_horizontal_overflow(mobile_page) is False
+    assert _small_visible_controls(mobile_page) == []
+
+
+def test_speech_failures_do_not_stop_automatic_progress(
+    browser: Browser,
+    live_server: str,
+    e2e_database_url: str,
+) -> None:
+    for mode, expected_status in [
+        ("absent", "静默模式"),
+        ("empty", "静默模式"),
+        ("delayed", "朗读模式"),
+        ("throw", "静默模式"),
+    ]:
+        page = browser.new_page(viewport={"width": 390, "height": 844})
+        try:
+            page.add_init_script(_speech_mock(mode))
+            session_id = _seed_player_session(
+                page,
+                live_server,
+                e2e_database_url,
+                name=f"Speech {mode}",
+                interval_seconds=1,
+            )
+            page.goto(f"{live_server}/study/{session_id}")
+            first = page.locator("[data-study-term]").text_content()
+            page.get_by_text(expected_status, exact=True).wait_for(timeout=2_000)
+            page.wait_for_function(
+                "(previous) => document.querySelector('[data-study-term]').textContent "
+                "!== previous",
+                arg=first,
+                timeout=2_500,
+            )
+            page.get_by_role("button", name="暂停").click()
+            page.get_by_role("button", name="结束").click()
+            page.wait_for_url("**?study_finished=1")
+        finally:
+            page.close()
+
+
+def test_visibility_restore_advances_only_one_item(
+    browser: Browser,
+    live_server: str,
+    e2e_database_url: str,
+) -> None:
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    try:
+        page.add_init_script(_speech_mock("ready"))
+        session_id = _seed_player_session(
+            page,
+            live_server,
+            e2e_database_url,
+            name="Visibility timing",
+            interval_seconds=1,
+            count=4,
+        )
+        page.goto(f"{live_server}/study/{session_id}")
+        page.evaluate(
+            """
+            () => {
+              window.__testHidden = true;
+              Object.defineProperty(document, "hidden", {
+                configurable: true,
+                get: () => window.__testHidden,
+              });
+              document.dispatchEvent(new Event("visibilitychange"));
+            }
+            """
+        )
+        page.wait_for_timeout(1_300)
+        page.evaluate(
+            """
+            () => {
+              window.__testHidden = false;
+              document.dispatchEvent(new Event("visibilitychange"));
+            }
+            """
+        )
+        page.wait_for_timeout(150)
+        assert page.locator("[data-study-term]").text_content() == "term-1"
+        page.get_by_role("button", name="暂停").click()
+        page.get_by_role("button", name="结束").click()
+        page.wait_for_url("**?study_finished=1")
+    finally:
+        page.close()
+
+
 def test_mobile_delete_retains_history_statistics(
     mobile_page: Page,
     live_server: str,
@@ -187,7 +343,7 @@ def test_mobile_delete_retains_history_statistics(
     form.get_by_role("button", name="解析预览").click()
     mobile_page.locator("#import-preview").wait_for(state="visible")
     mobile_page.get_by_role("button", name="确认导入").click()
-    mobile_page.wait_for_url("**/vocabularies/*")
+    mobile_page.wait_for_url(re.compile(r"/vocabularies/\d+(?:\?.*)?$"))
     vocabulary_id = int(urlparse(mobile_page.url).path.rsplit("/", 1)[-1])
 
     config = Settings(
@@ -224,14 +380,15 @@ def test_mobile_delete_retains_history_statistics(
     finally:
         engine.dispose()
 
+    expected_total = mobile_page.request.get(f"{live_server}/api/v1/statistics").json()[
+        "total_events"
+    ]
     mobile_page.goto(f"{live_server}/statistics")
+    statistics = mobile_page.locator("article", has_text="学习记录")
+    assert statistics.get_by_text(str(expected_total), exact=True).is_visible()
     assert (
-        mobile_page.get_by_text("学习记录").locator("..").get_by_text("1").is_visible()
-    )
-    assert (
-        mobile_page.get_by_text("连续学习天数")
-        .locator("..")
-        .get_by_text("1")
+        mobile_page.locator("article", has_text="连续学习天数")
+        .get_by_text("1", exact=True)
         .is_visible()
     )
 
@@ -240,17 +397,19 @@ def test_mobile_delete_retains_history_statistics(
     card.get_by_role("button", name="删除 Retained history").click()
     dialog = mobile_page.get_by_role("dialog")
     assert dialog.is_visible()
-    dialog.get_by_role("button", name="确认删除").click()
-    mobile_page.wait_for_url(f"{live_server}/vocabularies")
+    with mobile_page.expect_response(
+        lambda response: response.request.method == "DELETE"
+        and f"/api/v1/vocabularies/{vocabulary_id}" in response.url
+    ) as deletion:
+        dialog.get_by_role("button", name="确认删除").click()
+    assert deletion.value.status == 204
 
     mobile_page.goto(f"{live_server}/statistics")
+    statistics = mobile_page.locator("article", has_text="学习记录")
+    assert statistics.get_by_text(str(expected_total), exact=True).is_visible()
     assert (
-        mobile_page.get_by_text("学习记录").locator("..").get_by_text("1").is_visible()
-    )
-    assert (
-        mobile_page.get_by_text("连续学习天数")
-        .locator("..")
-        .get_by_text("1")
+        mobile_page.locator("article", has_text="连续学习天数")
+        .get_by_text("1", exact=True)
         .is_visible()
     )
     assert _has_horizontal_overflow(mobile_page) is False
@@ -260,8 +419,15 @@ def test_mobile_delete_retains_history_statistics(
     session_factory = create_session_factory(engine)
     try:
         with session_factory() as session:
-            assert session.scalar(select(func.count()).select_from(LearningEvent)) == 1
-            event = session.scalar(select(LearningEvent))
+            assert (
+                session.scalar(select(func.count()).select_from(LearningEvent))
+                == expected_total
+            )
+            event = session.scalar(
+                select(LearningEvent).where(
+                    LearningEvent.vocabulary_name_snapshot == "Retained history"
+                )
+            )
             assert event is not None
             assert event.entry_id is None
     finally:
@@ -306,3 +472,115 @@ def _small_visible_controls(page: Page) -> list[float]:
           .map(rect => rect.height)
         """
     )
+
+
+def _seed_player_session(
+    page: Page,
+    base_url: str,
+    database_url: str,
+    *,
+    name: str,
+    interval_seconds: int,
+    count: int = 3,
+) -> int:
+    config = Settings(
+        environment=Environment.TEST,
+        auth_mode=AuthMode.DISABLED,
+        database_url=database_url,
+    )
+    engine = create_database_engine(config)
+    session_factory = create_session_factory(engine)
+    try:
+        with session_factory() as session:
+            vocabulary = Vocabulary(name=name, entry_count=count)
+            session.add(vocabulary)
+            session.flush()
+            session.add_all(
+                [
+                    Entry(
+                        vocabulary_id=vocabulary.id,
+                        term=f"term-{index}",
+                        normalized_term=f"term-{index}",
+                        entry_type="word",
+                        meaning=f"meaning-{index}",
+                        tags=[],
+                    )
+                    for index in range(count)
+                ]
+            )
+            session.add(
+                StudyPlan(
+                    vocabulary_id=vocabulary.id,
+                    daily_new_count=count,
+                    daily_review_count=0,
+                    interval_seconds=interval_seconds,
+                )
+            )
+            session.commit()
+            vocabulary_id = vocabulary.id
+    finally:
+        engine.dispose()
+
+    response = page.request.post(
+        f"{base_url}/api/v1/study-sessions",
+        data={"vocabulary_id": vocabulary_id, "resume_existing": True},
+    )
+    assert response.ok
+    return int(response.json()["session"]["id"])
+
+
+def _speech_mock(mode: str) -> str:
+    if mode == "absent":
+        return """
+          Object.defineProperty(window, "speechSynthesis", {
+            configurable: true,
+            value: undefined,
+          });
+          Object.defineProperty(window, "SpeechSynthesisUtterance", {
+            configurable: true,
+            value: undefined,
+          });
+        """
+
+    voices = "[]" if mode in {"empty", "delayed"} else "[{ lang: 'en-US' }]"
+    speak = (
+        "throw new Error('speak failed');"
+        if mode == "throw"
+        else """
+      window.__spoken.push(utterance.text);
+    """
+    )
+    delayed = ""
+    if mode == "delayed":
+        delayed = """
+          setTimeout(() => {
+            window.__voices = [{ lang: "en-US" }];
+            if (window.__voicesChanged) window.__voicesChanged();
+          }, 100);
+        """
+    return f"""
+      window.__spoken = [];
+      window.__voices = {voices};
+      window.SpeechSynthesisUtterance = class {{
+        constructor(text) {{
+          this.text = text;
+          this.lang = "";
+          this.rate = 1;
+          this.voice = null;
+        }}
+      }};
+      Object.defineProperty(window, "speechSynthesis", {{
+        configurable: true,
+        value: {{
+          getVoices: () => window.__voices,
+          addEventListener: (name, callback) => {{
+            if (name === "voiceschanged") window.__voicesChanged = callback;
+          }},
+          speak: (utterance) => {{ {speak} }},
+          cancel: () => {{}},
+          pause: () => {{}},
+          resume: () => {{}},
+        }},
+      }});
+      {delayed}
+    """

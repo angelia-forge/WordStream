@@ -32,6 +32,9 @@ def test_alembic_upgrades_empty_database_to_head(
         plan_columns = {
             column["name"] for column in inspect(engine).get_columns("study_plans")
         }
+        event_columns = {
+            column["name"] for column in inspect(engine).get_columns("learning_events")
+        }
         table_names = set(inspect(engine).get_table_names())
         with engine.connect() as connection:
             revision = connection.execute(
@@ -50,6 +53,9 @@ def test_alembic_upgrades_empty_database_to_head(
         "study_plans",
         "review_states",
         "learning_events",
+        "study_sessions",
+        "session_items",
+        "session_attempts",
     }.issubset(table_names)
     assert {"normalized_term", "entry_type", "tags"}.issubset(entry_columns)
     assert {
@@ -61,7 +67,8 @@ def test_alembic_upgrades_empty_database_to_head(
         "updated_at",
     }.issubset(plan_columns)
     assert "daily_new_limit" not in plan_columns
-    assert revision == "20261013_0005"
+    assert "session_item_id" in event_columns
+    assert revision == "20261013_0006"
 
 
 def test_study_plan_migration_preserves_existing_limit(

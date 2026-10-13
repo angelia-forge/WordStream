@@ -1,9 +1,7 @@
 # Stage 1 API Planning Baseline
 
-This document records the Stage 1 vocabulary contract and preserves approved
-planning decisions for later study stages. Vocabulary management and the
-minimal history-retention schema are implemented; study-session endpoints
-remain planning baselines.
+This document records the implemented vocabulary, study-plan, and read-along
+session contracts.
 
 ## Vocabulary endpoints
 
@@ -43,7 +41,13 @@ remain planning baselines.
 ## Study endpoints
 
 `POST /api/v1/study-sessions` creates the queue and server-generated
-`session_item_id` values. Clients only reference those identifiers.
+`session_item_id` values. `resume_existing=true` returns the active session;
+`false` abandons it before creating a new one. A missing plan returns
+`PLAN_REQUIRED`; an empty queue returns `EMPTY_STUDY_QUEUE`.
+
+`GET /api/v1/study-sessions/{session_id}` returns the persisted queue and
+authoritative `current_index`. `current_index` is the completion frontier, not
+the player's display cursor. Looking at a previous item never moves it back.
 
 Settled outcomes use:
 
@@ -51,27 +55,41 @@ Settled outcomes use:
 POST /api/v1/study-sessions/{session_id}/outcomes/batch
 ```
 
-Each outcome contains `session_item_id`, `client_event_id`, `result`,
-`attempts`, optional `client_attempt_count`, and `occurred_at`. Every attempt
-contains a client-generated UUID `attempt_id` and its client timestamp.
+Each outcome contains `session_item_id`, a client-generated UUID `attempt_id`,
+`action=seen|again|replayed`, and timezone-aware `occurred_at`.
 
-- A retry reuses the same `SessionItem` and moves it to the queue tail.
+- A retry reuses the same `SessionItem`; it never creates a duplicate row.
+- The retried item is inserted after up to two other items, so it becomes the
+  third subsequent presentation when enough items remain, otherwise the tail.
 - Every accepted presentation increments server-side `attempt_count`.
-- Multiple attempts still produce one final `LearningEvent`.
+- The first `seen` or `again` locks the final result. A later `replayed`
+  presentation cannot overwrite it.
+- Multiple attempts still produce one final `LearningEvent`, keyed uniquely by
+  `session_item_id`.
 - `occurred_at` outside server UTC time plus or minus 24 hours is rejected with
   `VALIDATION_ERROR`.
 - The server deduplicates `attempt_id` values per item and derives the
-  authoritative attempt count. `client_attempt_count` is audit-only.
-- `client_event_id` and final `session_item_id` are unique.
+  authoritative attempt count.
 - A batch is atomic. Mixed new and conflicting entries reject the whole batch.
 
-Client conflict handling:
+The player keeps outcomes in memory and flushes after ten newly settled
+results, on pause, page hiding, and before finishing. It uses an absolute
+deadline for timing. Returning from a throttled background page advances at
+most one item.
 
-- `OUTCOME_ALREADY_RECORDED`: discard that local outcome and reload
-  `GET /api/v1/study-sessions/{id}` for authoritative state.
-- `IDEMPOTENCY_CONFLICT`: keep the local batch and retry with exponential
-  backoff at most three times. If it persists, stop automatic playback and
-  show a recoverable synchronization error.
+`POST /api/v1/study-sessions/{session_id}/finish` is idempotent. It writes one
+history event and updates one review state for every item with a final result,
+then marks the session finished. Unsettled items do not create history.
+
+## Speech and player fallback
+
+- The browser speaks the complete `term`; phrase whitespace is preserved.
+- Missing Speech APIs, empty voices, delayed `voiceschanged`, and `speak()`
+  failures never stop the timer.
+- Empty voices wait briefly for `voiceschanged`, then switch to visible silent
+  mode. A delayed voice event speaks the currently displayed term.
+- Pause suspends speech and the remaining deadline. Previous only browses
+  history; next resumes the authoritative frontier.
 
 ## Learning history
 

@@ -3,10 +3,11 @@
 WordStream (单词流) is a mobile-first words and fixed phrases read-along PWA
 built as a modular FastAPI monolith.
 
-The repository is at Stage 1: application shell, SQLite migrations, settings,
-single-user security, and vocabulary import and browsing. Imports support
-pasted text, CSV, TSV, TXT, JSON, and manual entry with a preview-before-commit
-workflow.
+The application includes the PWA shell, SQLite migrations, single-user
+security, vocabulary import and browsing, study-plan configuration, and a
+resumable mobile read-along player. The player supports browser speech,
+timestamp-based automatic switching, pause/resume, retry scheduling, and
+persisted learning history.
 
 ## Architecture
 
@@ -57,6 +58,9 @@ pre-commit run --all-files
 Pytest includes branch coverage and requires at least 80%. Install the Git
 hooks with `pre-commit install`.
 
+The E2E suite uses Playwright Chromium. On macOS, a local system Chrome can be
+used explicitly with `RUN_SYSTEM_CHROME_E2E=1 pytest tests/e2e --no-cov`.
+
 The import page is `http://127.0.0.1:8000/vocabularies/import`.
 
 ## Tailwind
@@ -79,7 +83,7 @@ contract is:
 
 Production startup rejects missing password or signing-key configuration.
 
-## Stage 1 acceptance
+## Acceptance
 
 ```bash
 alembic upgrade head
