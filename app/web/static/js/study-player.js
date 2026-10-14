@@ -596,9 +596,11 @@
     }
 
     discardConflict(outcomes, details) {
+      if (!details?.session_item_id && !details?.client_event_id) {
+        return;
+      }
       const conflicted = outcomes.filter(
         (outcome) =>
-          !details ||
           outcome.session_item_id === details.session_item_id ||
           outcome.client_event_id === details.client_event_id,
       );

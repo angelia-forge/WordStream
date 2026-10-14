@@ -33,6 +33,7 @@ from app.unit_of_work import AbstractUnitOfWork
 
 T = TypeVar("T")
 REVIEW_INTERVAL_DAYS = (1, 3, 7, 14, 30)
+OUTCOME_WRITE_MAX_ATTEMPTS = 3
 
 
 class StudySessionService:
@@ -140,93 +141,25 @@ class StudySessionService:
         batch: OutcomeBatch,
     ) -> OutcomeBatchResult:
         with self._uow:
-            study_session = self._require_session(session_id)
             now = utc_now()
             self._validate_batch_times(batch, now)
-
-            items_by_id = {item.id: item for item in study_session.items}
-            for outcome in batch.outcomes:
-                if outcome.session_item_id not in items_by_id:
-                    raise AppError(
-                        "SESSION_ITEM_NOT_FOUND",
-                        "Session item does not belong to this session",
-                        status_code=404,
-                    )
-
             unique_outcomes = self._deduplicate_batch(batch.outcomes)
             client_event_ids = [
                 str(outcome.client_event_id) for outcome in unique_outcomes
             ]
             item_ids = [outcome.session_item_id for outcome in unique_outcomes]
-            events_by_client_id = {
-                event.client_event_id: event
-                for event in self._uow.study_sessions.get_learning_events_by_client_ids(
-                    client_event_ids
-                )
-            }
-            events_by_item_id = {
-                event.session_item_id: event
-                for event in self._uow.study_sessions.get_learning_events_by_item_ids(
-                    item_ids
-                )
-            }
-            self._validate_persisted_outcomes(
-                unique_outcomes,
-                events_by_client_id,
-                events_by_item_id,
-            )
-            new_outcomes = [
-                outcome
-                for outcome in unique_outcomes
-                if str(outcome.client_event_id) not in events_by_client_id
-            ]
-            if new_outcomes and study_session.status != "active":
-                raise AppError(
-                    "SESSION_NOT_ACTIVE",
-                    "Study session is not active",
-                    status_code=409,
-                )
-            setting = self._uow.settings.get() if new_outcomes else None
-            event_timezone = (
-                setting.timezone if setting is not None else self._settings.app_timezone
-            )
+            for attempt in range(OUTCOME_WRITE_MAX_ATTEMPTS):
+                study_session = self._require_session(session_id)
+                items_by_id = {item.id: item for item in study_session.items}
+                for outcome in batch.outcomes:
+                    if outcome.session_item_id not in items_by_id:
+                        raise AppError(
+                            "SESSION_ITEM_NOT_FOUND",
+                            "Session item does not belong to this session",
+                            status_code=404,
+                        )
 
-            accepted = 0
-            duplicates = len(batch.outcomes) - len(unique_outcomes)
-            for outcome in unique_outcomes:
-                client_event_id = str(outcome.client_event_id)
-                if client_event_id in events_by_client_id:
-                    duplicates += 1
-                    continue
-
-                item = items_by_id[outcome.session_item_id]
-                item.attempt_count += 1
-                item.result = outcome.result
-                self._uow.study_sessions.add_attempt(
-                    SessionAttempt(
-                        id=client_event_id,
-                        session_item_id=outcome.session_item_id,
-                        action=outcome.result,
-                        occurred_at=outcome.occurred_at,
-                    )
-                )
-                self._write_learning_result(
-                    study_session,
-                    item,
-                    outcome,
-                    timezone=event_timezone,
-                )
-                accepted += 1
-
-            study_session.current_index = sum(
-                item.result is not None for item in study_session.items
-            )
-            try:
-                self._uow.study_sessions.flush()
-                self._uow.commit()
-            except IntegrityError as exc:
-                self._uow.rollback()
-                race_events = {
+                events_by_client_id = {
                     event.client_event_id: event
                     for event in (
                         self._uow.study_sessions.get_learning_events_by_client_ids(
@@ -234,7 +167,7 @@ class StudySessionService:
                         )
                     )
                 }
-                race_item_events = {
+                events_by_item_id = {
                     event.session_item_id: event
                     for event in (
                         self._uow.study_sessions.get_learning_events_by_item_ids(
@@ -244,37 +177,118 @@ class StudySessionService:
                 }
                 self._validate_persisted_outcomes(
                     unique_outcomes,
-                    race_events,
-                    race_item_events,
+                    events_by_client_id,
+                    events_by_item_id,
                 )
-                if len(race_events) == len(unique_outcomes):
-                    state = self._serialize(self._require_session(session_id))
-                    return OutcomeBatchResult(
-                        **state.model_dump(),
-                        accepted=0,
-                        duplicates=len(batch.outcomes),
-                    )
-                raise AppError(
-                    "OUTCOME_ALREADY_RECORDED",
-                    "The final result for a session item is already recorded",
-                    status_code=409,
-                ) from exc
-            except OperationalError as exc:
-                self._uow.rollback()
-                if "locked" in str(exc).lower():
+                new_outcomes = [
+                    outcome
+                    for outcome in unique_outcomes
+                    if str(outcome.client_event_id) not in events_by_client_id
+                ]
+                if new_outcomes and study_session.status != "active":
                     raise AppError(
-                        "DATABASE_BUSY",
-                        "The database is busy; retry the batch",
-                        status_code=503,
-                    ) from exc
-                raise
+                        "SESSION_NOT_ACTIVE",
+                        "Study session is not active",
+                        status_code=409,
+                    )
+                setting = self._uow.settings.get() if new_outcomes else None
+                event_timezone = (
+                    setting.timezone
+                    if setting is not None
+                    else self._settings.app_timezone
+                )
 
-            state = self._serialize(study_session)
-            return OutcomeBatchResult(
-                **state.model_dump(),
-                accepted=accepted,
-                duplicates=duplicates,
-            )
+                accepted = 0
+                duplicates = len(batch.outcomes) - len(unique_outcomes)
+                for outcome in unique_outcomes:
+                    client_event_id = str(outcome.client_event_id)
+                    if client_event_id in events_by_client_id:
+                        duplicates += 1
+                        continue
+
+                    item = items_by_id[outcome.session_item_id]
+                    item.attempt_count += 1
+                    item.result = outcome.result
+                    self._uow.study_sessions.add_attempt(
+                        SessionAttempt(
+                            id=client_event_id,
+                            session_item_id=outcome.session_item_id,
+                            action=outcome.result,
+                            occurred_at=outcome.occurred_at,
+                        )
+                    )
+                    self._write_learning_result(
+                        study_session,
+                        item,
+                        outcome,
+                        timezone=event_timezone,
+                    )
+                    accepted += 1
+
+                study_session.current_index = sum(
+                    item.result is not None for item in study_session.items
+                )
+                try:
+                    self._uow.study_sessions.flush()
+                    self._uow.commit()
+                except IntegrityError as exc:
+                    self._uow.rollback()
+                    race_events = {
+                        event.client_event_id: event
+                        for event in (
+                            self._uow.study_sessions.get_learning_events_by_client_ids(
+                                client_event_ids
+                            )
+                        )
+                    }
+                    race_item_events = {
+                        event.session_item_id: event
+                        for event in (
+                            self._uow.study_sessions.get_learning_events_by_item_ids(
+                                item_ids
+                            )
+                        )
+                    }
+                    self._validate_persisted_outcomes(
+                        unique_outcomes,
+                        race_events,
+                        race_item_events,
+                    )
+                    if len(race_events) == len(unique_outcomes):
+                        state = self._serialize(self._require_session(session_id))
+                        return OutcomeBatchResult(
+                            **state.model_dump(),
+                            accepted=0,
+                            duplicates=len(batch.outcomes),
+                        )
+                    if not race_events and not race_item_events:
+                        raise
+                    if attempt == OUTCOME_WRITE_MAX_ATTEMPTS - 1:
+                        raise AppError(
+                            "DATABASE_BUSY",
+                            "Concurrent outcomes are still being recorded; "
+                            "retry the batch",
+                            status_code=503,
+                        ) from exc
+                    continue
+                except OperationalError as exc:
+                    self._uow.rollback()
+                    if "locked" in str(exc).lower():
+                        raise AppError(
+                            "DATABASE_BUSY",
+                            "The database is busy; retry the batch",
+                            status_code=503,
+                        ) from exc
+                    raise
+
+                state = self._serialize(study_session)
+                return OutcomeBatchResult(
+                    **state.model_dump(),
+                    accepted=accepted,
+                    duplicates=duplicates,
+                )
+
+            raise RuntimeError("Outcome write attempts were exhausted")
 
     def finish(self, session_id: int) -> StudySessionSummary:
         with self._uow:

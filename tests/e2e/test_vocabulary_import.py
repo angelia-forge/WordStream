@@ -334,6 +334,53 @@ def test_offline_outbox_retries_when_network_returns(
         page.close()
 
 
+def test_conflict_without_details_keeps_outbox_entries(
+    browser: Browser,
+    live_server: str,
+    e2e_database_url: str,
+) -> None:
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    try:
+        page.add_init_script(_speech_mock("ready"))
+        session_id = _seed_player_session(
+            page,
+            live_server,
+            e2e_database_url,
+            name="Incomplete conflict",
+            interval_seconds=10,
+            count=2,
+        )
+        endpoint = f"**/api/v1/study-sessions/{session_id}/outcomes/batch"
+        page.route(
+            endpoint,
+            lambda route: route.fulfill(
+                status=409,
+                json={
+                    "error": {
+                        "code": "OUTCOME_ALREADY_RECORDED",
+                        "message": "Learning outcome conflict",
+                        "details": None,
+                    }
+                },
+            ),
+        )
+        page.goto(f"{live_server}/study/{session_id}")
+        page.get_by_role("button", name="下一个").click()
+        page.get_by_role("button", name="暂停").click()
+        page.get_by_text("Learning outcome conflict").wait_for(timeout=5_000)
+
+        assert (
+            page.evaluate(
+                "(id) => JSON.parse(localStorage.getItem("
+                "`wordstream.study.outbox.${id}`)).length",
+                session_id,
+            )
+            == 1
+        )
+    finally:
+        page.close()
+
+
 def test_speech_failures_do_not_stop_automatic_progress(
     browser: Browser,
     live_server: str,

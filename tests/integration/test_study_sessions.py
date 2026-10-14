@@ -441,6 +441,70 @@ def test_concurrent_outcomes_for_one_item_have_one_winner(
         assert session.scalar(select(func.count()).select_from(LearningEvent)) == 1
 
 
+def test_partially_overlapping_concurrent_batches_preserve_unique_outcomes(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vocabulary_id = import_vocabulary(client, count=3)
+    configure_plan(client, vocabulary_id)
+    created = client.post(
+        "/api/v1/study-sessions",
+        json={"vocabulary_id": vocabulary_id},
+    ).json()
+    session_id = created["session"]["id"]
+    first, second, third = created["items"]
+    flush_barrier = Barrier(2)
+    original_flush = StudySessionRepository.flush
+    synchronized_repositories: set[int] = set()
+
+    def synchronized_first_flush(repository: StudySessionRepository) -> None:
+        repository_id = id(repository)
+        if repository_id not in synchronized_repositories:
+            synchronized_repositories.add(repository_id)
+            flush_barrier.wait(timeout=5)
+        original_flush(repository)
+
+    monkeypatch.setattr(
+        StudySessionRepository,
+        "flush",
+        synchronized_first_flush,
+    )
+    shared = outcome(first["id"], "seen")
+    payloads = [
+        {"outcomes": [shared, outcome(second["id"], "seen")]},
+        {"outcomes": [shared, outcome(third["id"], "again")]},
+    ]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(
+            executor.map(
+                lambda payload: client.post(
+                    f"/api/v1/study-sessions/{session_id}/outcomes/batch",
+                    json=payload,
+                ),
+                payloads,
+            )
+        )
+
+    assert [response.status_code for response in responses] == [200, 200]
+    assert sorted(response.json()["accepted"] for response in responses) == [1, 2]
+    assert sorted(response.json()["duplicates"] for response in responses) == [0, 1]
+    session_factory = client.app.state.session_factory
+    with session_factory() as session:
+        events = list(session.scalars(select(LearningEvent)))
+        attempts = list(session.scalars(select(SessionAttempt)))
+        refreshed = session.get(StudySession, session_id)
+
+    assert len(events) == 3
+    assert len(attempts) == 3
+    assert {event.session_item_id for event in events} == {
+        first["id"],
+        second["id"],
+        third["id"],
+    }
+    assert refreshed is not None
+    assert refreshed.current_index == 3
+
+
 def test_sqlite_write_lock_returns_database_busy(client: TestClient) -> None:
     vocabulary_id = import_vocabulary(client, count=1)
     configure_plan(client, vocabulary_id)
