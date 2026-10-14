@@ -45,7 +45,7 @@ def protected_client(database_url: str) -> Iterator[TestClient]:
         database_url=database_url,
         auth_mode=AuthMode.PASSWORD,
         app_password="correct-password",
-        secret_key="test-secret-with-enough-entropy",
+        secret_key="test-secret-with-enough-entropy!",
         app_api_key="test-api-key",
     )
     with TestClient(create_app(config)) as test_client:

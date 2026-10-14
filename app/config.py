@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+MIN_SECRET_KEY_LENGTH = 32
+
 
 class Environment(StrEnum):
     DEVELOPMENT = "development"
@@ -52,18 +54,39 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_security(self) -> Settings:
+        password = (
+            self.app_password.get_secret_value()
+            if self.app_password is not None
+            else None
+        )
+        secret_key = (
+            self.secret_key.get_secret_value() if self.secret_key is not None else None
+        )
+        credentials_missing = (
+            password is None
+            or not password.strip()
+            or secret_key is None
+            or not secret_key.strip()
+        )
+
         if self.environment is Environment.PRODUCTION:
             if self.auth_mode is AuthMode.DISABLED:
                 raise ValueError("Authentication cannot be disabled in production")
-            if self.secret_key is None or self.app_password is None:
+            if credentials_missing:
                 raise ValueError(
                     "SECRET_KEY and APP_PASSWORD are required in production"
                 )
-        if self.auth_mode is AuthMode.PASSWORD and (
-            self.app_password is None or self.secret_key is None
-        ):
+        if self.auth_mode is AuthMode.PASSWORD and credentials_missing:
             raise ValueError(
                 "APP_PASSWORD and SECRET_KEY are required for password auth"
+            )
+        if (
+            self.auth_mode is AuthMode.PASSWORD
+            and secret_key is not None
+            and len(secret_key.strip()) < MIN_SECRET_KEY_LENGTH
+        ):
+            raise ValueError(
+                f"SECRET_KEY must be at least {MIN_SECRET_KEY_LENGTH} characters"
             )
         return self
 

@@ -55,7 +55,8 @@ curl http://127.0.0.1:8000/api/v1/health
 ```
 
 Local development defaults to `AUTH_MODE=disabled`. For the password gate, set
-`AUTH_MODE=password`, `APP_PASSWORD`, and `SECRET_KEY`.
+`AUTH_MODE=password`, a non-empty `APP_PASSWORD`, and a `SECRET_KEY` containing
+at least 32 characters.
 
 ## Main Workflow
 
